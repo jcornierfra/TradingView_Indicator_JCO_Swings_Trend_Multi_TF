@@ -1,0 +1,625 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © jcornier
+//
+// Version: 2.1
+// GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
+//
+// Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
+//              the trend direction based on swing structure. Features include:
+//              - Multi-timeframe analysis (1 primary + 3 optional secondary TFs)
+//              - Trend detection: Bullish/Bearish with Momentum or Compression status
+//              - CHoCH (Change of Character) detection for potential reversals
+//              - CHoCH-gated trend reversals to prevent premature trend changes
+//              - Liquidity sweep detection with close price confirmation
+//              - Swing alternation with automatic missing swing insertion
+//              - Multi-column dashboard showing all active TF analyses
+//
+// Changelog:
+//   v2.1 - 2025-02-08
+//     - Add gateTrendChange: trend reversals now require CHoCH confirmation (close price break)
+//     - Without CHoCH, trend stays if larger structure holds (sh0>sh3 / sl0<sl3), else unknown
+//     - Liquidity sweep now uses gated (confirmed) direction instead of raw direction
+//   v2.0 - 2025-02-07
+//     - Multi-timeframe support: 4 TFs (1 primary + 3 optional secondary)
+//     - SwingState UDT with processAlternation() method for per-TF state
+//     - Simplified getPivotsHTF() to return 4 values (was 12)
+//     - Multi-column dashboard (labels + 4 TF columns)
+//     - TF1: red/green icons (hardcoded); TF2-4: single configurable color per TF
+//     - Removed SH/SL values display from dashboard
+//     - Expansion display as toggle parameter
+//   v1.0 - 2025-01-01
+//     - Initial release: single-timeframe swing/trend analysis
+//     - Trend detection with Momentum/Compression status
+//     - CHoCH and liquidity sweep detection
+//     - Dashboard with trend, CHoCH, liquidity sweep, expansion
+
+//@version=6
+indicator("JCO Swings Trend Multi TF", overlay=true, max_labels_count=500)
+
+// ===== Inputs =====
+// General (common to all TFs)
+swingPeriod          = input.int(5, "Swing Period", minval=3, group="General")
+swingIconGapPercent  = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="General")
+displayDashboard     = input.bool(true, "Display Dashboard", group="General")
+displayExpansion     = input.bool(true, "Display Expansion", group="General")
+dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="General")
+
+// TF 1 (Primary - always enabled)
+swingTimeFrame1 = input.timeframe("60", "Timeframe", group="TF 1 (Primary)")
+drawSwingIcons1 = input.bool(true, "Draw Icons", group="TF 1 (Primary)")
+
+// TF 2
+enableTF2       = input.bool(false, "Enable", group="TF 2")
+swingTimeFrame2 = input.timeframe("240", "Timeframe", group="TF 2")
+drawSwingIcons2 = input.bool(true, "Draw Icons", group="TF 2")
+iconColor2      = input.color(color.orange, "Icon Color", group="TF 2")
+
+// TF 3
+enableTF3       = input.bool(false, "Enable", group="TF 3")
+swingTimeFrame3 = input.timeframe("D", "Timeframe", group="TF 3")
+drawSwingIcons3 = input.bool(true, "Draw Icons", group="TF 3")
+iconColor3      = input.color(color.purple, "Icon Color", group="TF 3")
+
+// TF 4
+enableTF4       = input.bool(false, "Enable", group="TF 4")
+swingTimeFrame4 = input.timeframe("W", "Timeframe", group="TF 4")
+drawSwingIcons4 = input.bool(true, "Draw Icons", group="TF 4")
+iconColor4      = input.color(color.aqua, "Icon Color", group="TF 4")
+
+// ===== Constants =====
+int NODIRECTION    = 0
+int BULLISH        = 1
+int BEARISH        = -1
+int MOMENTUM       = 1
+int COMPRESSION    = 2
+int CONTINUATION   = 0
+int CHOCH_BULLISH  = 1
+int CHOCH_BEARISH  = -1
+
+// ===== Pivot offset =====
+int leftBars  = swingPeriod / 2
+int rightBars = swingPeriod / 2
+
+// ===== SwingState UDT =====
+type SwingState
+    bool  lastWasHigh = false
+    float ph_0 = na
+    float ph_1 = na
+    float ph_2 = na
+    float ph_3 = na
+    float ph_4 = na
+    float pl_0 = na
+    float pl_1 = na
+    float pl_2 = na
+    float pl_3 = na
+    float pl_4 = na
+    float lastRawPH = na
+    float lastRawPL = na
+    float phClose_0 = na
+    float plClose_0 = na
+    float lastRawPHClose = na
+    float lastRawPLClose = na
+    label lastSwingHighLabel = na
+    label lastSwingLowLabel = na
+    int   lastAcceptedHighBar = na
+    int   lastAcceptedLowBar = na
+
+// ===== Timeframe validation =====
+int chartTFSeconds = timeframe.in_seconds(timeframe.period)
+int swingTF1Sec = timeframe.in_seconds(swingTimeFrame1)
+int swingTF2Sec = timeframe.in_seconds(swingTimeFrame2)
+int swingTF3Sec = timeframe.in_seconds(swingTimeFrame3)
+int swingTF4Sec = timeframe.in_seconds(swingTimeFrame4)
+
+bool validTF1 = chartTFSeconds <= swingTF1Sec
+bool validTF2 = chartTFSeconds <= swingTF2Sec
+bool validTF3 = chartTFSeconds <= swingTF3Sec
+bool validTF4 = chartTFSeconds <= swingTF4Sec
+
+bool activeTF1 = validTF1
+bool activeTF2 = enableTF2 and validTF2
+bool activeTF3 = enableTF3 and validTF3
+bool activeTF4 = enableTF4 and validTF4
+
+// ===== HTF bars lookback per TF =====
+int htfLookback1 = math.max(50, int(swingTF1Sec / chartTFSeconds) * (rightBars + 3))
+int htfLookback2 = math.max(50, int(swingTF2Sec / chartTFSeconds) * (rightBars + 3))
+int htfLookback3 = math.max(50, int(swingTF3Sec / chartTFSeconds) * (rightBars + 3))
+int htfLookback4 = math.max(50, int(swingTF4Sec / chartTFSeconds) * (rightBars + 3))
+
+// ===== Helper function to get pivots on HTF =====
+getPivotsHTF() =>
+    float pivotHighPrice = ta.pivothigh(leftBars, rightBars)
+    float pivotLowPrice  = ta.pivotlow(leftBars, rightBars)
+    bool isPivotHigh = not na(pivotHighPrice)
+    bool isPivotLow  = not na(pivotLowPrice)
+
+    float ph0 = ta.valuewhen(isPivotHigh, pivotHighPrice, 0)
+    float pl0 = ta.valuewhen(isPivotLow, pivotLowPrice, 0)
+
+    // Close prices: best close in 5-candle window around pivot (for CHoCH detection)
+    float _rb2Close = rightBars >= 2 ? close[rightBars - 2] : close[rightBars]
+    float _windowMaxClose = math.max(math.max(close[rightBars + 2], close[rightBars + 1]), math.max(math.max(close[rightBars], close[rightBars - 1]), _rb2Close))
+    float _windowMinClose = math.min(math.min(close[rightBars + 2], close[rightBars + 1]), math.min(math.min(close[rightBars], close[rightBars - 1]), _rb2Close))
+    float phClose0 = ta.valuewhen(isPivotHigh, _windowMaxClose, 0)
+    float plClose0 = ta.valuewhen(isPivotLow, _windowMinClose, 0)
+
+    [ph0, pl0, phClose0, plClose0]
+
+// ===== Request data from all HTFs =====
+[rawPH0_1, rawPL0_1, rawPHClose_1, rawPLClose_1] = request.security(syminfo.tickerid, swingTimeFrame1, getPivotsHTF())
+[rawPH0_2, rawPL0_2, rawPHClose_2, rawPLClose_2] = request.security(syminfo.tickerid, swingTimeFrame2, getPivotsHTF())
+[rawPH0_3, rawPL0_3, rawPHClose_3, rawPLClose_3] = request.security(syminfo.tickerid, swingTimeFrame3, getPivotsHTF())
+[rawPH0_4, rawPL0_4, rawPHClose_4, rawPLClose_4] = request.security(syminfo.tickerid, swingTimeFrame4, getPivotsHTF())
+
+// ===== Helper functions for swing bar detection =====
+findSwingHighBar(float price, int lookback) =>
+    int foundBar = na
+    for i = 0 to lookback
+        if high[i] == price
+            foundBar := bar_index - i
+            break
+    foundBar
+
+findSwingLowBar(float price, int lookback) =>
+    int foundBar = na
+    for i = 0 to lookback
+        if low[i] == price
+            foundBar := bar_index - i
+            break
+    foundBar
+
+findLowestLowBetween(int olderBarIdx, int newerBarIdx) =>
+    float resultPrice = na
+    int resultBar = na
+    float resultClose = na
+    if not na(olderBarIdx) and not na(newerBarIdx) and newerBarIdx > olderBarIdx + 1
+        int startLb = bar_index - olderBarIdx - 1
+        int endLb = bar_index - newerBarIdx + 1
+        for i = endLb to startLb
+            if i >= 0
+                if na(resultPrice) or low[i] < resultPrice
+                    resultPrice := low[i]
+                    resultBar := bar_index - i
+                    resultClose := close[i]
+    [resultPrice, resultBar, resultClose]
+
+findHighestHighBetween(int olderBarIdx, int newerBarIdx) =>
+    float resultPrice = na
+    int resultBar = na
+    float resultClose = na
+    if not na(olderBarIdx) and not na(newerBarIdx) and newerBarIdx > olderBarIdx + 1
+        int startLb = bar_index - olderBarIdx - 1
+        int endLb = bar_index - newerBarIdx + 1
+        for i = endLb to startLb
+            if i >= 0
+                if na(resultPrice) or high[i] > resultPrice
+                    resultPrice := high[i]
+                    resultBar := bar_index - i
+                    resultClose := close[i]
+    [resultPrice, resultBar, resultClose]
+
+// ===== Alternation processing (method on SwingState) =====
+method processAlternation(SwingState this, float rawPH0, float rawPL0, float rawPHClose, float rawPLClose, int lookback) =>
+    bool rawHighChanged = not na(rawPH0) and (na(this.lastRawPH) or rawPH0 != this.lastRawPH)
+    bool rawLowChanged  = not na(rawPL0) and (na(this.lastRawPL) or rawPL0 != this.lastRawPL)
+    bool nSH = false
+    bool nSL = false
+    bool uSH = false
+    bool uSL = false
+
+    if rawHighChanged and rawLowChanged
+        if not this.lastWasHigh
+            this.ph_4 := this.ph_3
+            this.ph_3 := this.ph_2
+            this.ph_2 := this.ph_1
+            this.ph_1 := this.ph_0
+            this.ph_0 := rawPH0
+            this.phClose_0 := rawPHClose
+            this.lastWasHigh := true
+            nSH := true
+            this.lastRawPH := rawPH0
+            this.lastRawPHClose := rawPHClose
+            this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
+        else
+            this.pl_4 := this.pl_3
+            this.pl_3 := this.pl_2
+            this.pl_2 := this.pl_1
+            this.pl_1 := this.pl_0
+            this.pl_0 := rawPL0
+            this.plClose_0 := rawPLClose
+            this.lastWasHigh := false
+            nSL := true
+            this.lastRawPL := rawPL0
+            this.lastRawPLClose := rawPLClose
+            this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
+    else if rawHighChanged
+        if not this.lastWasHigh
+            this.ph_4 := this.ph_3
+            this.ph_3 := this.ph_2
+            this.ph_2 := this.ph_1
+            this.ph_1 := this.ph_0
+            this.ph_0 := rawPH0
+            this.phClose_0 := rawPHClose
+            this.lastWasHigh := true
+            nSH := true
+            this.lastRawPH := rawPH0
+            this.lastRawPHClose := rawPHClose
+            this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
+        else
+            int newHighBar = findSwingHighBar(rawPH0, lookback)
+            bool missingFound = false
+            if not na(newHighBar) and not na(this.lastAcceptedHighBar)
+                [mPrice, mBar, mClose] = findLowestLowBetween(this.lastAcceptedHighBar, newHighBar)
+                if not na(mPrice)
+                    this.pl_4 := this.pl_3
+                    this.pl_3 := this.pl_2
+                    this.pl_2 := this.pl_1
+                    this.pl_1 := this.pl_0
+                    this.pl_0 := mPrice
+                    this.plClose_0 := mPrice
+                    nSL := true
+                    this.lastAcceptedLowBar := mBar
+                    this.ph_4 := this.ph_3
+                    this.ph_3 := this.ph_2
+                    this.ph_2 := this.ph_1
+                    this.ph_1 := this.ph_0
+                    this.ph_0 := rawPH0
+                    this.phClose_0 := rawPHClose
+                    nSH := true
+                    this.lastAcceptedHighBar := newHighBar
+                    missingFound := true
+            if not missingFound and not na(this.ph_0) and rawPH0 > this.ph_0
+                this.ph_0 := rawPH0
+                this.phClose_0 := rawPHClose
+                uSH := true
+                if not na(newHighBar)
+                    this.lastAcceptedHighBar := newHighBar
+            this.lastRawPH := rawPH0
+            this.lastRawPHClose := rawPHClose
+    else if rawLowChanged
+        if this.lastWasHigh
+            this.pl_4 := this.pl_3
+            this.pl_3 := this.pl_2
+            this.pl_2 := this.pl_1
+            this.pl_1 := this.pl_0
+            this.pl_0 := rawPL0
+            this.plClose_0 := rawPLClose
+            this.lastWasHigh := false
+            nSL := true
+            this.lastRawPL := rawPL0
+            this.lastRawPLClose := rawPLClose
+            this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
+        else
+            int newLowBar = findSwingLowBar(rawPL0, lookback)
+            bool missingFound = false
+            if not na(newLowBar) and not na(this.lastAcceptedLowBar)
+                [mPrice, mBar, mClose] = findHighestHighBetween(this.lastAcceptedLowBar, newLowBar)
+                if not na(mPrice)
+                    this.ph_4 := this.ph_3
+                    this.ph_3 := this.ph_2
+                    this.ph_2 := this.ph_1
+                    this.ph_1 := this.ph_0
+                    this.ph_0 := mPrice
+                    this.phClose_0 := mPrice
+                    nSH := true
+                    this.lastAcceptedHighBar := mBar
+                    this.pl_4 := this.pl_3
+                    this.pl_3 := this.pl_2
+                    this.pl_2 := this.pl_1
+                    this.pl_1 := this.pl_0
+                    this.pl_0 := rawPL0
+                    this.plClose_0 := rawPLClose
+                    nSL := true
+                    this.lastAcceptedLowBar := newLowBar
+                    missingFound := true
+            if not missingFound and not na(this.pl_0) and rawPL0 < this.pl_0
+                this.pl_0 := rawPL0
+                this.plClose_0 := rawPLClose
+                uSL := true
+                if not na(newLowBar)
+                    this.lastAcceptedLowBar := newLowBar
+            this.lastRawPL := rawPL0
+            this.lastRawPLClose := rawPLClose
+    [nSH, nSL, uSH, uSL]
+
+// ===== Calculate Trend (with Primary/Secondary confirmation) =====
+calcSwingsTrend(sh0, sh1, sh2, sl0, sl1, sl2) =>
+    if na(sh0) or na(sh1) or na(sh2) or na(sl0) or na(sl1) or na(sl2)
+        [NODIRECTION, 0]
+    else
+        bool perfectBullish = (sl2 < sl1) and (sl1 < sl0)
+        bool sweepBullish   = (sl2 > sl1) and (sl0 > sl2)
+        bool ll1Higher      = sl0 > sl1
+        bool primaryBullish = (perfectBullish or sweepBullish) and ll1Higher
+        bool ambiguousBullish = (sl2 > sl1) and (sl1 < sl0)
+
+        bool perfectBearish = (sh2 > sh1) and (sh1 > sh0)
+        bool sweepBearish   = (sh2 < sh1) and (sh0 < sh2)
+        bool hh1Lower       = sh0 < sh1
+        bool primaryBearish = (perfectBearish or sweepBearish) and hh1Lower
+        bool ambiguousBearish = (sh2 < sh1) and (sh1 > sh0)
+
+        bool highsConfirmBull = sh0 > sh1
+        bool lowsConfirmBear  = sl0 < sl1
+
+        if primaryBullish
+            int status = highsConfirmBull ? MOMENTUM : COMPRESSION
+            [BULLISH, status]
+        else if primaryBearish
+            int status = lowsConfirmBear ? MOMENTUM : COMPRESSION
+            [BEARISH, status]
+        else if ambiguousBullish and highsConfirmBull
+            [BULLISH, MOMENTUM]
+        else if ambiguousBearish and lowsConfirmBear
+            [BEARISH, MOMENTUM]
+        else
+            [NODIRECTION, 0]
+
+// ===== Calculate Liquidity Sweep =====
+calcLiquiditySweep(direction, sh0, sh1, sh2, sl0, sl1, sl2, shClose0, slClose0) =>
+    if na(sl0) or na(sl1) or na(sl2) or na(sh0) or na(sh1) or na(sh2)
+        false
+    else if direction == BULLISH
+        bool case1 = (sl1 < sl2) and (sl0 > sl1) and (sh0 > sh1)
+        bool case2 = (sl0 < sl1) and ((slClose0 > sl1) or (sh0 > sh1))
+        case1 or case2
+    else if direction == BEARISH
+        bool case1 = (sh1 > sh2) and (sh0 < sh1) and (sl0 < sl1)
+        bool case2 = (sh0 > sh1) and ((shClose0 < sh1) or (sl0 < sl1))
+        case1 or case2
+    else
+        false
+
+// ===== Calculate CHoCH (Change of Character) =====
+calcCHoCH(sh0, sh1, sh2, sl0, sl1, sl2, sh0Close, sl0Close, prevDir, hasPrevTrend) =>
+    if na(sh0) or na(sh1) or na(sl0) or na(sl1) or na(sh0Close) or na(sl0Close)
+        CONTINUATION
+    else
+        bool hh1AboveHH2 = sh0 > sh1
+        bool hh1ClosedAboveHH2 = sh0Close > sh1
+        bool prevNotBullish = hasPrevTrend ? (prevDir != BULLISH) : (not na(sh2) and sh1 < sh2)
+
+        if prevNotBullish and hh1AboveHH2 and hh1ClosedAboveHH2
+            CHOCH_BULLISH
+        else
+            bool ll1BelowLL2 = sl0 < sl1
+            bool ll1ClosedBelowLL2 = sl0Close < sl1
+            bool prevNotBearish = hasPrevTrend ? (prevDir != BEARISH) : (not na(sl2) and sl1 > sl2)
+
+            if prevNotBearish and ll1BelowLL2 and ll1ClosedBelowLL2
+                CHOCH_BEARISH
+            else
+                CONTINUATION
+
+// ===== Gate trend change (require CHoCH confirmation for reversals) =====
+gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, float sh0, float sh3, float sl0, float sl3) =>
+    if prevDir == BULLISH and rawDir == BEARISH
+        if choch == CHOCH_BEARISH
+            [BEARISH, rawStatus]
+        else
+            if not na(sh0) and not na(sh3) and sh0 > sh3
+                [BULLISH, COMPRESSION]
+            else
+                [NODIRECTION, 0]
+    else if prevDir == BEARISH and rawDir == BULLISH
+        if choch == CHOCH_BULLISH
+            [BULLISH, rawStatus]
+        else
+            if not na(sl0) and not na(sl3) and sl0 < sl3
+                [BEARISH, COMPRESSION]
+            else
+                [NODIRECTION, 0]
+    else
+        [rawDir, rawStatus]
+
+// ===== Draw swing icons helper =====
+drawSwingIcons(SwingState st, bool newHigh, bool newLow, bool updHigh, bool updLow, color highCol, color lowCol, float gapPct, int lookback) =>
+    if newHigh and not na(st.ph_0)
+        int swingBar = findSwingHighBar(st.ph_0, lookback)
+        float gap = st.ph_0 * (gapPct / 100)
+        if not na(swingBar)
+            st.lastSwingHighLabel := label.new(swingBar, st.ph_0 + gap, "▼",
+                 xloc=xloc.bar_index, style=label.style_label_down, textcolor=highCol,
+                 color=color.new(color.white, 100), size=size.small)
+    if updHigh and not na(st.ph_0)
+        int swingBar = findSwingHighBar(st.ph_0, lookback)
+        float gap = st.ph_0 * (gapPct / 100)
+        if not na(swingBar)
+            if not na(st.lastSwingHighLabel)
+                label.delete(st.lastSwingHighLabel)
+            st.lastSwingHighLabel := label.new(swingBar, st.ph_0 + gap, "▼",
+                 xloc=xloc.bar_index, style=label.style_label_down, textcolor=highCol,
+                 color=color.new(color.white, 100), size=size.small)
+    if newLow and not na(st.pl_0)
+        int swingBar = findSwingLowBar(st.pl_0, lookback)
+        float gap = st.pl_0 * (gapPct / 100)
+        if not na(swingBar)
+            st.lastSwingLowLabel := label.new(swingBar, st.pl_0 - gap, "▲",
+                 xloc=xloc.bar_index, style=label.style_label_up, textcolor=lowCol,
+                 color=color.new(color.white, 100), size=size.small)
+    if updLow and not na(st.pl_0)
+        int swingBar = findSwingLowBar(st.pl_0, lookback)
+        float gap = st.pl_0 * (gapPct / 100)
+        if not na(swingBar)
+            if not na(st.lastSwingLowLabel)
+                label.delete(st.lastSwingLowLabel)
+            st.lastSwingLowLabel := label.new(swingBar, st.pl_0 - gap, "▲",
+                 xloc=xloc.bar_index, style=label.style_label_up, textcolor=lowCol,
+                 color=color.new(color.white, 100), size=size.small)
+    true
+
+// ===== Dashboard column helper =====
+fillDashboardColumn(table tbl, int col, string tfName, bool valid, bool enabled, int direction, int trendSt, int choch, bool liqSweep, float expansion, color tfColor) =>
+    if not enabled
+        table.cell(tbl, col, 0, tfName, text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        table.cell(tbl, col, 1, "OFF", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        table.cell(tbl, col, 2, "OFF", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        table.cell(tbl, col, 3, "OFF", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        if displayExpansion
+            table.cell(tbl, col, 4, "OFF", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+    else if not valid
+        table.cell(tbl, col, 0, tfName, text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        table.cell(tbl, col, 1, "N/A", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        table.cell(tbl, col, 2, "N/A", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        table.cell(tbl, col, 3, "N/A", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+        if displayExpansion
+            table.cell(tbl, col, 4, "N/A", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+    else
+        table.cell(tbl, col, 0, tfName, text_color=tfColor, text_halign=text.align_center, text_size=size.small)
+
+        // Trend
+        string statusTxt = trendSt == MOMENTUM ? " (M)" : trendSt == COMPRESSION ? " (C)" : ""
+        string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "?"
+        color dirCol = direction == BULLISH ? color.lime : direction == BEARISH ? color.red : color.gray
+        table.cell(tbl, col, 1, dirTxt, text_color=dirCol, text_halign=text.align_center, text_size=size.small)
+
+        // CHoCH
+        string chochTxt = choch == CHOCH_BULLISH ? "Bull" : choch == CHOCH_BEARISH ? "Bear" : "Cont"
+        color chochCol = choch == CHOCH_BULLISH ? color.lime : choch == CHOCH_BEARISH ? color.red : color.gray
+        table.cell(tbl, col, 2, chochTxt, text_color=chochCol, text_halign=text.align_center, text_size=size.small)
+
+        // Liquidity Sweep
+        table.cell(tbl, col, 3, liqSweep ? "Yes" : "No", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+
+        // Expansion
+        if displayExpansion
+            table.cell(tbl, col, 4, na(expansion) ? "N/A" : str.tostring(expansion, "#.#"), text_color=color.aqua, text_halign=text.align_center, text_size=size.small)
+    true
+
+// ===== State instances (persist across bars) =====
+var SwingState state1 = SwingState.new()
+var SwingState state2 = SwingState.new()
+var SwingState state3 = SwingState.new()
+var SwingState state4 = SwingState.new()
+
+// ===== Process alternation for each TF =====
+[newSH1, newSL1, updSH1, updSL1] = if activeTF1
+    state1.processAlternation(rawPH0_1, rawPL0_1, rawPHClose_1, rawPLClose_1, htfLookback1)
+else
+    [false, false, false, false]
+
+[newSH2, newSL2, updSH2, updSL2] = if activeTF2
+    state2.processAlternation(rawPH0_2, rawPL0_2, rawPHClose_2, rawPLClose_2, htfLookback2)
+else
+    [false, false, false, false]
+
+[newSH3, newSL3, updSH3, updSL3] = if activeTF3
+    state3.processAlternation(rawPH0_3, rawPL0_3, rawPHClose_3, rawPLClose_3, htfLookback3)
+else
+    [false, false, false, false]
+
+[newSH4, newSL4, updSH4, updSL4] = if activeTF4
+    state4.processAlternation(rawPH0_4, rawPL0_4, rawPHClose_4, rawPLClose_4, htfLookback4)
+else
+    [false, false, false, false]
+
+// ===== Calculate trend, CHoCH, gate trend change, liquidity sweep for each TF =====
+// TF1
+[prevDir1, _ps1] = calcSwingsTrend(state1.ph_1, state1.ph_2, state1.ph_3, state1.pl_1, state1.pl_2, state1.pl_3)
+bool hasPrev1 = not na(state1.ph_3) and not na(state1.pl_3)
+[rawDir1, rawStatus1] = if activeTF1
+    calcSwingsTrend(state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2)
+else
+    [NODIRECTION, 0]
+int choch1 = activeTF1 ? calcCHoCH(state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2, state1.phClose_0, state1.plClose_0, prevDir1, hasPrev1) : CONTINUATION
+[dir1, status1] = if activeTF1
+    gateTrendChange(rawDir1, rawStatus1, prevDir1, choch1, state1.ph_0, state1.ph_3, state1.pl_0, state1.pl_3)
+else
+    [NODIRECTION, 0]
+bool liqSweep1 = activeTF1 ? calcLiquiditySweep(dir1, state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2, state1.phClose_0, state1.plClose_0) : false
+
+// TF2
+[prevDir2, _ps2] = calcSwingsTrend(state2.ph_1, state2.ph_2, state2.ph_3, state2.pl_1, state2.pl_2, state2.pl_3)
+bool hasPrev2 = not na(state2.ph_3) and not na(state2.pl_3)
+[rawDir2, rawStatus2] = if activeTF2
+    calcSwingsTrend(state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2)
+else
+    [NODIRECTION, 0]
+int choch2 = activeTF2 ? calcCHoCH(state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2, state2.phClose_0, state2.plClose_0, prevDir2, hasPrev2) : CONTINUATION
+[dir2, status2] = if activeTF2
+    gateTrendChange(rawDir2, rawStatus2, prevDir2, choch2, state2.ph_0, state2.ph_3, state2.pl_0, state2.pl_3)
+else
+    [NODIRECTION, 0]
+bool liqSweep2 = activeTF2 ? calcLiquiditySweep(dir2, state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2, state2.phClose_0, state2.plClose_0) : false
+
+// TF3
+[prevDir3, _ps3] = calcSwingsTrend(state3.ph_1, state3.ph_2, state3.ph_3, state3.pl_1, state3.pl_2, state3.pl_3)
+bool hasPrev3 = not na(state3.ph_3) and not na(state3.pl_3)
+[rawDir3, rawStatus3] = if activeTF3
+    calcSwingsTrend(state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2)
+else
+    [NODIRECTION, 0]
+int choch3 = activeTF3 ? calcCHoCH(state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2, state3.phClose_0, state3.plClose_0, prevDir3, hasPrev3) : CONTINUATION
+[dir3, status3] = if activeTF3
+    gateTrendChange(rawDir3, rawStatus3, prevDir3, choch3, state3.ph_0, state3.ph_3, state3.pl_0, state3.pl_3)
+else
+    [NODIRECTION, 0]
+bool liqSweep3 = activeTF3 ? calcLiquiditySweep(dir3, state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2, state3.phClose_0, state3.plClose_0) : false
+
+// TF4
+[prevDir4, _ps4] = calcSwingsTrend(state4.ph_1, state4.ph_2, state4.ph_3, state4.pl_1, state4.pl_2, state4.pl_3)
+bool hasPrev4 = not na(state4.ph_3) and not na(state4.pl_3)
+[rawDir4, rawStatus4] = if activeTF4
+    calcSwingsTrend(state4.ph_0, state4.ph_1, state4.ph_2, state4.pl_0, state4.pl_1, state4.pl_2)
+else
+    [NODIRECTION, 0]
+int choch4 = activeTF4 ? calcCHoCH(state4.ph_0, state4.ph_1, state4.ph_2, state4.pl_0, state4.pl_1, state4.pl_2, state4.phClose_0, state4.plClose_0, prevDir4, hasPrev4) : CONTINUATION
+[dir4, status4] = if activeTF4
+    gateTrendChange(rawDir4, rawStatus4, prevDir4, choch4, state4.ph_0, state4.ph_3, state4.pl_0, state4.pl_3)
+else
+    [NODIRECTION, 0]
+bool liqSweep4 = activeTF4 ? calcLiquiditySweep(dir4, state4.ph_0, state4.ph_1, state4.ph_2, state4.pl_0, state4.pl_1, state4.pl_2, state4.phClose_0, state4.plClose_0) : false
+
+// ===== Draw icons for each TF =====
+if drawSwingIcons1 and activeTF1
+    drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, color.red, color.green, swingIconGapPercent, htfLookback1)
+
+if enableTF2 and drawSwingIcons2 and activeTF2
+    drawSwingIcons(state2, newSH2, newSL2, updSH2, updSL2, iconColor2, iconColor2, swingIconGapPercent, htfLookback2)
+
+if enableTF3 and drawSwingIcons3 and activeTF3
+    drawSwingIcons(state3, newSH3, newSL3, updSH3, updSL3, iconColor3, iconColor3, swingIconGapPercent, htfLookback3)
+
+if enableTF4 and drawSwingIcons4 and activeTF4
+    drawSwingIcons(state4, newSH4, newSL4, updSH4, updSL4, iconColor4, iconColor4, swingIconGapPercent, htfLookback4)
+
+// ===== Dashboard =====
+if displayDashboard and barstate.islast
+    int numRows = displayExpansion ? 5 : 4
+    var table dashboard = table.new(position.top_right, 5, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
+
+    // Label column (col 0)
+    table.cell(dashboard, 0, 0, "", text_size=size.small)
+    table.cell(dashboard, 0, 1, "Trend", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(dashboard, 0, 2, "CHoCH", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(dashboard, 0, 3, "Liq Sweep", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    if displayExpansion
+        table.cell(dashboard, 0, 4, "Expansion", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+
+    // Calculate expansions
+    float pipSize = syminfo.mintick * 100
+    float exp1 = na(state1.ph_0) or na(state1.pl_0) ? na : (state1.ph_0 - state1.pl_0) / pipSize
+    float exp2 = na(state2.ph_0) or na(state2.pl_0) ? na : (state2.ph_0 - state2.pl_0) / pipSize
+    float exp3 = na(state3.ph_0) or na(state3.pl_0) ? na : (state3.ph_0 - state3.pl_0) / pipSize
+    float exp4 = na(state4.ph_0) or na(state4.pl_0) ? na : (state4.ph_0 - state4.pl_0) / pipSize
+
+    // Fill TF columns
+    fillDashboardColumn(dashboard, 1, swingTimeFrame1, validTF1, true,      dir1, status1, choch1, liqSweep1, exp1, color.gray)
+    fillDashboardColumn(dashboard, 2, swingTimeFrame2, validTF2, enableTF2, dir2, status2, choch2, liqSweep2, exp2, iconColor2)
+    fillDashboardColumn(dashboard, 3, swingTimeFrame3, validTF3, enableTF3, dir3, status3, choch3, liqSweep3, exp3, iconColor3)
+    fillDashboardColumn(dashboard, 4, swingTimeFrame4, validTF4, enableTF4, dir4, status4, choch4, liqSweep4, exp4, iconColor4)
+
+// ===== Plot hidden values for alerts =====
+plot(dir1, "Trend Direction TF1", display=display.none)
+plot(choch1, "CHoCH Status TF1", display=display.none)
+plot(liqSweep1 ? 1 : 0, "Liquidity Sweep TF1", display=display.none)
+plot(dir2, "Trend Direction TF2", display=display.none)
+plot(choch2, "CHoCH Status TF2", display=display.none)
+plot(liqSweep2 ? 1 : 0, "Liquidity Sweep TF2", display=display.none)
+plot(dir3, "Trend Direction TF3", display=display.none)
+plot(choch3, "CHoCH Status TF3", display=display.none)
+plot(liqSweep3 ? 1 : 0, "Liquidity Sweep TF3", display=display.none)
+plot(dir4, "Trend Direction TF4", display=display.none)
+plot(choch4, "CHoCH Status TF4", display=display.none)
+plot(liqSweep4 ? 1 : 0, "Liquidity Sweep TF4", display=display.none)
