@@ -2,6 +2,8 @@
 
 A TradingView Pine Script v6 indicator that detects swing highs/lows on up to 4 configurable timeframes and determines trend direction based on swing structure.
 
+![JCO Swings Trend Multi TF](screenshot.png)
+
 ## Features
 
 - **Multi-timeframe analysis** - 1 primary + 3 optional secondary timeframes
