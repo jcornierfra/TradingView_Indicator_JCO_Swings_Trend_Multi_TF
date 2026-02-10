@@ -84,19 +84,24 @@ The trend is determined from the 3 most recent swing highs (`sh0, sh1, sh2`) and
 
 **Priority**: Primary Bullish > Primary Bearish > Ambiguous Bullish > Ambiguous Bearish > No Direction (?)
 
-### 3. CHoCH - Change of Character (`calcCHoCH`)
+### 3. CHoCH - Change of Character (`calcCHoCH`) - Dual Detection
 
-Detects potential trend reversals by comparing current swings with the previous trend direction. Requires both **price break** and **close confirmation**:
+Detects potential trend reversals using **dual detection**: both bullish and bearish CHoCH are evaluated simultaneously. Requires both **price break** and **close confirmation**:
 
-**CHoCH Bullish** (potential reversal from bearish to bullish):
+**CHoCH Bullish** conditions:
 1. `sh0 > sh1` - New higher high (price break)
 2. `sh0Close > sh1` - Close confirms above previous high
-3. Previous trend was not bullish
+3. Previous highs were declining (`sh1 < sh2`) OR previous trend was not bullish
 
-**CHoCH Bearish** (potential reversal from bullish to bearish):
+**CHoCH Bearish** conditions:
 1. `sl0 < sl1` - New lower low (price break)
 2. `sl0Close < sl1` - Close confirms below previous low
-3. Previous trend was not bearish
+3. Previous lows were rising (`sl1 > sl2`) OR previous trend was not bearish
+
+**Dual CHoCH resolution**: When both bullish and bearish structural conditions are true simultaneously, the **most recent swing** wins:
+- Last swing was a high (`lastWasHigh`) -> CHoCH Bullish wins
+- Last swing was a low -> CHoCH Bearish wins
+- If the winning CHoCH matches `prevDir` (e.g., CHoCH Bullish but already bullish), the opposing CHoCH was a **liquidity sweep** -> `chochLiqSweep = true`
 
 The close price used is the **best close in a 5-candle window** around the pivot (max close for highs, min close for lows), providing more robust confirmation than a single candle's close.
 
@@ -104,10 +109,13 @@ The close price used is the **best close in a 5-candle window** around the pivot
 
 Prevents premature trend reversals by requiring CHoCH confirmation before accepting a direction change:
 
+**Dual CHoCH liquidity sweep** (highest priority): When `chochLiqSweep` is true (dual CHoCH detected and most recent matches previous direction), the previous trend is restored as **Momentum** and liquidity sweep is flagged.
+
 **When raw trend reverses from previous direction:**
 
 | Previous | Raw | CHoCH confirms? | Larger structure holds? | Result |
 |----------|-----|-----------------|------------------------|--------|
+| any | any | Dual CHoCH liq sweep | - | **prevDir (M)** + liq sweep |
 | Bullish | Bearish | Yes (CHoCH Bearish) | - | **Bearish** (accept) |
 | Bullish | Bearish | No | `sh0 > sh3` | **Bullish (C)** (maintain) |
 | Bullish | Bearish | No | `sh0 <= sh3` | **? (unknown)** |
@@ -131,7 +139,9 @@ Detects when price sweeps beyond a previous swing level then reverses, suggestin
 - Case 1: Previous high broke structure (`sh1 > sh2`) but price reversed down (`sh0 < sh1, sl0 < sl1`)
 - Case 2: Current high broke previous (`sh0 > sh1`) but close rejected below (`shClose0 < sh1`) or lows confirm (`sl0 < sl1`)
 
-Note: Liquidity sweep uses the **gated** (confirmed) trend direction, not the raw direction.
+Liquidity sweep is the **union** of two sources:
+- **Gated liquidity sweep**: from dual CHoCH detection (opposing CHoCH was a liquidity sweep)
+- **Structural liquidity sweep**: from `calcLiquiditySweep` using the gated (confirmed) trend direction
 
 ### 6. Expansion
 
@@ -175,6 +185,13 @@ Hidden plots are available for TradingView alerts on each TF:
 - Chart timeframe must be <= swing timeframe for valid results
 
 ## Changelog
+
+### v2.2 - 2026-02-10
+- Dual CHoCH detection: detects both bullish and bearish CHoCH simultaneously
+- When both CHoCH exist, most recent swing wins; if it matches prevDir -> liquidity sweep
+- `gateTrendChange`: dual CHoCH liquidity sweep restores previous trend as Momentum
+- Liquidity sweep combines gated (dual CHoCH) + structural detection
+- Aligned with single-TF version (JCO Swings Trend HTF v1.3)
 
 ### v2.1 - 2025-02-08
 - Add `gateTrendChange`: trend reversals now require CHoCH confirmation (close price break)
