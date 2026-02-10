@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.2
+// Version: 2.3
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -15,6 +15,10 @@
 //              - Multi-column dashboard showing all active TF analyses
 //
 // Changelog:
+//   v2.3 - 2026-02-10
+//     - Configurable pip value parameter (replaces hardcoded mintick * 100)
+//     - Dashboard columns sorted by TF duration (smallest left, largest right)
+//     - Human-readable TF names in dashboard (15m, 1H, 4H instead of raw minutes)
 //   v2.2 - 2026-02-10
 //     - Dual CHoCH detection: detects both bullish and bearish CHoCH simultaneously
 //     - When both CHoCH exist, most recent swing wins; if it matches prevDir -> liquidity sweep
@@ -48,6 +52,7 @@ swingPeriod          = input.int(5, "Swing Period", minval=3, group="General")
 swingIconGapPercent  = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="General")
 displayDashboard     = input.bool(true, "Display Dashboard", group="General")
 displayExpansion     = input.bool(true, "Display Expansion", group="General")
+pipValue             = input.float(0.1, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Gold: 0.1, Forex majors: 0.0001", group="General")
 dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="General")
 
 // TF 1 (Primary - always enabled)
@@ -476,6 +481,16 @@ drawSwingIcons(SwingState st, bool newHigh, bool newLow, bool updHigh, bool updL
                  color=color.new(color.white, 100), size=size.small)
     true
 
+// ===== Format timeframe for display =====
+formatTF(string tf) =>
+    float mins = str.tonumber(tf)
+    if na(mins)
+        tf
+    else if mins >= 60
+        str.tostring(int(mins / 60)) + "H"
+    else
+        str.tostring(int(mins)) + "m"
+
 // ===== Dashboard column helper =====
 fillDashboardColumn(table tbl, int col, string tfName, bool valid, bool enabled, int direction, int trendSt, int choch, bool liqSweep, float expansion, color tfColor) =>
     if not enabled
@@ -637,17 +652,42 @@ if displayDashboard and barstate.islast
         table.cell(dashboard, 0, 4, "Expansion", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
 
     // Calculate expansions
-    float pipSize = syminfo.mintick * 100
-    float exp1 = na(state1.ph_0) or na(state1.pl_0) ? na : (state1.ph_0 - state1.pl_0) / pipSize
-    float exp2 = na(state2.ph_0) or na(state2.pl_0) ? na : (state2.ph_0 - state2.pl_0) / pipSize
-    float exp3 = na(state3.ph_0) or na(state3.pl_0) ? na : (state3.ph_0 - state3.pl_0) / pipSize
-    float exp4 = na(state4.ph_0) or na(state4.pl_0) ? na : (state4.ph_0 - state4.pl_0) / pipSize
+    float exp1 = na(state1.ph_0) or na(state1.pl_0) ? na : (state1.ph_0 - state1.pl_0) / pipValue
+    float exp2 = na(state2.ph_0) or na(state2.pl_0) ? na : (state2.ph_0 - state2.pl_0) / pipValue
+    float exp3 = na(state3.ph_0) or na(state3.pl_0) ? na : (state3.ph_0 - state3.pl_0) / pipValue
+    float exp4 = na(state4.ph_0) or na(state4.pl_0) ? na : (state4.ph_0 - state4.pl_0) / pipValue
 
-    // Fill TF columns
-    fillDashboardColumn(dashboard, 1, swingTimeFrame1, validTF1, true,      dir1, status1, choch1, liqSweep1, exp1, color.gray)
-    fillDashboardColumn(dashboard, 2, swingTimeFrame2, validTF2, enableTF2, dir2, status2, choch2, liqSweep2, exp2, iconColor2)
-    fillDashboardColumn(dashboard, 3, swingTimeFrame3, validTF3, enableTF3, dir3, status3, choch3, liqSweep3, exp3, iconColor3)
-    fillDashboardColumn(dashboard, 4, swingTimeFrame4, validTF4, enableTF4, dir4, status4, choch4, liqSweep4, exp4, iconColor4)
+    // Sort TFs by duration (smallest to largest) for column ordering
+    array<int> tfSecs = array.from(swingTF1Sec, swingTF2Sec, swingTF3Sec, swingTF4Sec)
+    array<int> order = array.from(0, 1, 2, 3)
+    for i = 0 to 2
+        int minPos = i
+        for j = i + 1 to 3
+            if array.get(tfSecs, j) < array.get(tfSecs, minPos)
+                minPos := j
+        if minPos != i
+            int tmpSec = array.get(tfSecs, i)
+            array.set(tfSecs, i, array.get(tfSecs, minPos))
+            array.set(tfSecs, minPos, tmpSec)
+            int tmpIdx = array.get(order, i)
+            array.set(order, i, array.get(order, minPos))
+            array.set(order, minPos, tmpIdx)
+
+    // Package per-TF data into arrays for sorted access
+    array<string> tfNames    = array.from(formatTF(swingTimeFrame1), formatTF(swingTimeFrame2), formatTF(swingTimeFrame3), formatTF(swingTimeFrame4))
+    array<bool>   tfValid    = array.from(validTF1, validTF2, validTF3, validTF4)
+    array<bool>   tfEnabled  = array.from(true, enableTF2, enableTF3, enableTF4)
+    array<int>    tfDir      = array.from(dir1, dir2, dir3, dir4)
+    array<int>    tfStatus   = array.from(status1, status2, status3, status4)
+    array<int>    tfChoch    = array.from(choch1, choch2, choch3, choch4)
+    array<bool>   tfLiqSweep = array.from(liqSweep1, liqSweep2, liqSweep3, liqSweep4)
+    array<float>  tfExp      = array.from(exp1, exp2, exp3, exp4)
+    array<color>  tfColor    = array.from(color.gray, iconColor2, iconColor3, iconColor4)
+
+    // Fill TF columns in sorted order (smallest TF left, largest right)
+    for col = 0 to 3
+        int idx = array.get(order, col)
+        fillDashboardColumn(dashboard, col + 1, array.get(tfNames, idx), array.get(tfValid, idx), array.get(tfEnabled, idx), array.get(tfDir, idx), array.get(tfStatus, idx), array.get(tfChoch, idx), array.get(tfLiqSweep, idx), array.get(tfExp, idx), array.get(tfColor, idx))
 
 // ===== Plot hidden values for alerts =====
 plot(dir1, "Trend Direction TF1", display=display.none)

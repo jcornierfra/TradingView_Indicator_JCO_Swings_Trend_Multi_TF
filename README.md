@@ -30,6 +30,7 @@ A TradingView Pine Script v6 indicator that detects swing highs/lows on up to 4 
 | Icon Gap | 0.1% | Distance between swing icon and price level |
 | Display Dashboard | true | Show/hide the multi-column dashboard |
 | Display Expansion | true | Show/hide the expansion row in dashboard |
+| Pip Value ($) | 0.1 | Value of 1 pip in price units (Gold: 0.1, Forex majors: 0.0001) |
 | Dashboard Border Width | 0 | Border width of the dashboard table |
 
 ### TF 1 (Primary - always enabled)
@@ -148,17 +149,17 @@ Liquidity sweep is the **union** of two sources:
 Measures the distance between the most recent swing high and swing low in pips:
 
 ```
-Expansion = (ph_0 - pl_0) / pipSize
+Expansion = (ph_0 - pl_0) / pipValue
 ```
 
-Where `pipSize = syminfo.mintick * 100`. Display can be toggled on/off.
+Where `pipValue` is a configurable input parameter (default 0.1 for gold, 0.0001 for forex majors). Display can be toggled on/off.
 
 ## Dashboard
 
 The dashboard displays a multi-column table in the top-right corner:
 
 ```
-|           | 60   | 240  | D    | W    |
+|           | 1H   | 4H   | D    | W    |
 |-----------|------|------|------|------|
 | Trend     | Bull (M) | Bear (C) | ?    | OFF  |
 | CHoCH     | Cont | Bear | Cont | OFF  |
@@ -166,6 +167,8 @@ The dashboard displays a multi-column table in the top-right corner:
 | Expansion | 42.5 | 128.3| N/A  | OFF  |
 ```
 
+- **Sorted columns**: TFs are automatically sorted by duration (smallest left, largest right), regardless of parameter order
+- **Human-readable headers**: Timeframes display as 15m, 1H, 4H, D, W, M instead of raw minute values
 - **Active TFs**: Color-coded values (green=bullish, red=bearish, gray=neutral)
 - **Disabled TFs**: "OFF" in gray
 - **Invalid TFs** (chart TF > swing TF): "N/A" in gray
@@ -185,6 +188,11 @@ Hidden plots are available for TradingView alerts on each TF:
 - Chart timeframe must be <= swing timeframe for valid results
 
 ## Changelog
+
+### v2.3 - 2026-02-10
+- Configurable pip value parameter (replaces hardcoded `mintick * 100`)
+- Dashboard columns sorted by TF duration (smallest left, largest right)
+- Human-readable TF names in dashboard (15m, 1H, 4H instead of raw minutes)
 
 ### v2.2 - 2026-02-10
 - Dual CHoCH detection: detects both bullish and bearish CHoCH simultaneously
