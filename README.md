@@ -63,7 +63,7 @@ Each timeframe maintains its own `SwingState` (User-Defined Type) tracking the l
 
 ### 2. Trend Detection (`calcSwingsTrend`)
 
-The trend is determined from the 3 most recent swing highs (`sh0, sh1, sh2`) and swing lows (`sl0, sl1, sl2`):
+The trend is determined from the **close prices** of the 3 most recent swing highs and swing lows, rather than the actual high/low values. This filters out liquidity wicks and focuses on where price was "accepted" (closed). CHoCH, liquidity sweep, and expansion continue to use actual high/low values.
 
 **Bullish patterns** (based on swing lows):
 - **Perfect**: `sl2 < sl1 < sl0` (3 consecutive higher lows)
@@ -104,7 +104,7 @@ Detects potential trend reversals using **dual detection**: both bullish and bea
 - Last swing was a low -> CHoCH Bearish wins
 - If the winning CHoCH matches `prevDir` (e.g., CHoCH Bullish but already bullish), the opposing CHoCH was a **liquidity sweep** -> `chochLiqSweep = true`
 
-The close price used is the **best close in a 5-candle window** around the pivot (max close for highs, min close for lows), providing more robust confirmation than a single candle's close.
+The close price used is the **close of the pivot candle itself** (`close[rightBars]` at detection time), ensuring that only genuine close-based breaks trigger CHoCH signals.
 
 ### 4. Gated Trend Change (`gateTrendChange`)
 
@@ -188,6 +188,11 @@ Hidden plots are available for TradingView alerts on each TF:
 - Chart timeframe must be <= swing timeframe for valid results
 
 ## Changelog
+
+### v2.4 - 2026-02-18
+- Close-based trend calculation: `calcSwingsTrend` uses pivot close prices instead of high/low to filter liquidity wicks
+- CHoCH, liquidity sweep, gate trend change, and expansion remain on actual high/low values
+- Pivot close simplified: uses close of the pivot candle itself instead of best close in 5-candle window (fixes false CHoCH signals triggered by neighboring candle closes)
 
 ### v2.3 - 2026-02-10
 - Configurable pip value parameter (replaces hardcoded `mintick * 100`)

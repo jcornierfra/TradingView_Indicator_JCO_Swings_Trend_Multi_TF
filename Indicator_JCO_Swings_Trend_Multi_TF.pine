@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.3
+// Version: 2.4
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -15,6 +15,11 @@
 //              - Multi-column dashboard showing all active TF analyses
 //
 // Changelog:
+//   v2.4 - 2026-02-18
+//     - Close-based trend calculation: calcSwingsTrend uses pivot close prices instead of high/low
+//       to filter liquidity wicks (CHoCH, liquidity sweep, expansion remain on high/low)
+//     - Pivot close simplified: uses close of the pivot candle itself instead of best close
+//       in 5-candle window (fixes false CHoCH signals triggered by neighboring candle closes)
 //   v2.3 - 2026-02-10
 //     - Configurable pip value parameter (replaces hardcoded mintick * 100)
 //     - Dashboard columns sorted by TF duration (smallest left, largest right)
@@ -107,7 +112,13 @@ type SwingState
     float lastRawPH = na
     float lastRawPL = na
     float phClose_0 = na
+    float phClose_1 = na
+    float phClose_2 = na
+    float phClose_3 = na
     float plClose_0 = na
+    float plClose_1 = na
+    float plClose_2 = na
+    float plClose_3 = na
     float lastRawPHClose = na
     float lastRawPLClose = na
     label lastSwingHighLabel = na
@@ -148,12 +159,9 @@ getPivotsHTF() =>
     float ph0 = ta.valuewhen(isPivotHigh, pivotHighPrice, 0)
     float pl0 = ta.valuewhen(isPivotLow, pivotLowPrice, 0)
 
-    // Close prices: best close in 5-candle window around pivot (for CHoCH detection)
-    float _rb2Close = rightBars >= 2 ? close[rightBars - 2] : close[rightBars]
-    float _windowMaxClose = math.max(math.max(close[rightBars + 2], close[rightBars + 1]), math.max(math.max(close[rightBars], close[rightBars - 1]), _rb2Close))
-    float _windowMinClose = math.min(math.min(close[rightBars + 2], close[rightBars + 1]), math.min(math.min(close[rightBars], close[rightBars - 1]), _rb2Close))
-    float phClose0 = ta.valuewhen(isPivotHigh, _windowMaxClose, 0)
-    float plClose0 = ta.valuewhen(isPivotLow, _windowMinClose, 0)
+    // Close price of the pivot candle itself
+    float phClose0 = ta.valuewhen(isPivotHigh, close[rightBars], 0)
+    float plClose0 = ta.valuewhen(isPivotLow, close[rightBars], 0)
 
     [ph0, pl0, phClose0, plClose0]
 
@@ -226,6 +234,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.ph_2 := this.ph_1
             this.ph_1 := this.ph_0
             this.ph_0 := rawPH0
+            this.phClose_3 := this.phClose_2
+            this.phClose_2 := this.phClose_1
+            this.phClose_1 := this.phClose_0
             this.phClose_0 := rawPHClose
             this.lastWasHigh := true
             nSH := true
@@ -238,6 +249,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.pl_2 := this.pl_1
             this.pl_1 := this.pl_0
             this.pl_0 := rawPL0
+            this.plClose_3 := this.plClose_2
+            this.plClose_2 := this.plClose_1
+            this.plClose_1 := this.plClose_0
             this.plClose_0 := rawPLClose
             this.lastWasHigh := false
             nSL := true
@@ -251,6 +265,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.ph_2 := this.ph_1
             this.ph_1 := this.ph_0
             this.ph_0 := rawPH0
+            this.phClose_3 := this.phClose_2
+            this.phClose_2 := this.phClose_1
+            this.phClose_1 := this.phClose_0
             this.phClose_0 := rawPHClose
             this.lastWasHigh := true
             nSH := true
@@ -268,7 +285,10 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.pl_2 := this.pl_1
                     this.pl_1 := this.pl_0
                     this.pl_0 := mPrice
-                    this.plClose_0 := mPrice
+                    this.plClose_3 := this.plClose_2
+                    this.plClose_2 := this.plClose_1
+                    this.plClose_1 := this.plClose_0
+                    this.plClose_0 := mClose
                     nSL := true
                     this.lastAcceptedLowBar := mBar
                     this.ph_4 := this.ph_3
@@ -276,6 +296,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.ph_2 := this.ph_1
                     this.ph_1 := this.ph_0
                     this.ph_0 := rawPH0
+                    this.phClose_3 := this.phClose_2
+                    this.phClose_2 := this.phClose_1
+                    this.phClose_1 := this.phClose_0
                     this.phClose_0 := rawPHClose
                     nSH := true
                     this.lastAcceptedHighBar := newHighBar
@@ -295,6 +318,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.pl_2 := this.pl_1
             this.pl_1 := this.pl_0
             this.pl_0 := rawPL0
+            this.plClose_3 := this.plClose_2
+            this.plClose_2 := this.plClose_1
+            this.plClose_1 := this.plClose_0
             this.plClose_0 := rawPLClose
             this.lastWasHigh := false
             nSL := true
@@ -312,7 +338,10 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.ph_2 := this.ph_1
                     this.ph_1 := this.ph_0
                     this.ph_0 := mPrice
-                    this.phClose_0 := mPrice
+                    this.phClose_3 := this.phClose_2
+                    this.phClose_2 := this.phClose_1
+                    this.phClose_1 := this.phClose_0
+                    this.phClose_0 := mClose
                     nSH := true
                     this.lastAcceptedHighBar := mBar
                     this.pl_4 := this.pl_3
@@ -320,6 +349,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.pl_2 := this.pl_1
                     this.pl_1 := this.pl_0
                     this.pl_0 := rawPL0
+                    this.plClose_3 := this.plClose_2
+                    this.plClose_2 := this.plClose_1
+                    this.plClose_1 := this.plClose_0
                     this.plClose_0 := rawPLClose
                     nSL := true
                     this.lastAcceptedLowBar := newLowBar
@@ -558,10 +590,10 @@ else
 
 // ===== Calculate trend, CHoCH, gate trend change, liquidity sweep for each TF =====
 // TF1
-[prevDir1, _ps1] = calcSwingsTrend(state1.ph_1, state1.ph_2, state1.ph_3, state1.pl_1, state1.pl_2, state1.pl_3)
+[prevDir1, _ps1] = calcSwingsTrend(state1.phClose_1, state1.phClose_2, state1.phClose_3, state1.plClose_1, state1.plClose_2, state1.plClose_3)
 bool hasPrev1 = not na(state1.ph_3) and not na(state1.pl_3)
 [rawDir1, rawStatus1] = if activeTF1
-    calcSwingsTrend(state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2)
+    calcSwingsTrend(state1.phClose_0, state1.phClose_1, state1.phClose_2, state1.plClose_0, state1.plClose_1, state1.plClose_2)
 else
     [NODIRECTION, 0]
 [choch1, chochLiqSweep1] = if activeTF1
@@ -575,10 +607,10 @@ else
 bool liqSweep1 = activeTF1 ? (gatedLiqSweep1 or calcLiquiditySweep(dir1, state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2, state1.phClose_0, state1.plClose_0)) : false
 
 // TF2
-[prevDir2, _ps2] = calcSwingsTrend(state2.ph_1, state2.ph_2, state2.ph_3, state2.pl_1, state2.pl_2, state2.pl_3)
+[prevDir2, _ps2] = calcSwingsTrend(state2.phClose_1, state2.phClose_2, state2.phClose_3, state2.plClose_1, state2.plClose_2, state2.plClose_3)
 bool hasPrev2 = not na(state2.ph_3) and not na(state2.pl_3)
 [rawDir2, rawStatus2] = if activeTF2
-    calcSwingsTrend(state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2)
+    calcSwingsTrend(state2.phClose_0, state2.phClose_1, state2.phClose_2, state2.plClose_0, state2.plClose_1, state2.plClose_2)
 else
     [NODIRECTION, 0]
 [choch2, chochLiqSweep2] = if activeTF2
@@ -592,10 +624,10 @@ else
 bool liqSweep2 = activeTF2 ? (gatedLiqSweep2 or calcLiquiditySweep(dir2, state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2, state2.phClose_0, state2.plClose_0)) : false
 
 // TF3
-[prevDir3, _ps3] = calcSwingsTrend(state3.ph_1, state3.ph_2, state3.ph_3, state3.pl_1, state3.pl_2, state3.pl_3)
+[prevDir3, _ps3] = calcSwingsTrend(state3.phClose_1, state3.phClose_2, state3.phClose_3, state3.plClose_1, state3.plClose_2, state3.plClose_3)
 bool hasPrev3 = not na(state3.ph_3) and not na(state3.pl_3)
 [rawDir3, rawStatus3] = if activeTF3
-    calcSwingsTrend(state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2)
+    calcSwingsTrend(state3.phClose_0, state3.phClose_1, state3.phClose_2, state3.plClose_0, state3.plClose_1, state3.plClose_2)
 else
     [NODIRECTION, 0]
 [choch3, chochLiqSweep3] = if activeTF3
@@ -609,10 +641,10 @@ else
 bool liqSweep3 = activeTF3 ? (gatedLiqSweep3 or calcLiquiditySweep(dir3, state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2, state3.phClose_0, state3.plClose_0)) : false
 
 // TF4
-[prevDir4, _ps4] = calcSwingsTrend(state4.ph_1, state4.ph_2, state4.ph_3, state4.pl_1, state4.pl_2, state4.pl_3)
+[prevDir4, _ps4] = calcSwingsTrend(state4.phClose_1, state4.phClose_2, state4.phClose_3, state4.plClose_1, state4.plClose_2, state4.plClose_3)
 bool hasPrev4 = not na(state4.ph_3) and not na(state4.pl_3)
 [rawDir4, rawStatus4] = if activeTF4
-    calcSwingsTrend(state4.ph_0, state4.ph_1, state4.ph_2, state4.pl_0, state4.pl_1, state4.pl_2)
+    calcSwingsTrend(state4.phClose_0, state4.phClose_1, state4.phClose_2, state4.plClose_0, state4.plClose_1, state4.plClose_2)
 else
     [NODIRECTION, 0]
 [choch4, chochLiqSweep4] = if activeTF4
