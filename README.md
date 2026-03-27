@@ -189,6 +189,11 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.5 - 2026-03-27
+- Unknown trend displayed as "Range" (blue) instead of "?" (gray) in dashboard
+- Default parameters updated: TF1=15m, TF2=1H, TF3=4H, TF4=1D, all TFs enabled by default
+- TF2/TF4 draw icons off by default, TF1/TF3 draw icons on by default
+
 ### v2.4 - 2026-02-18
 - Close-based trend calculation: `calcSwingsTrend` uses pivot close prices instead of high/low to filter liquidity wicks
 - CHoCH, liquidity sweep, gate trend change, and expansion remain on actual high/low values

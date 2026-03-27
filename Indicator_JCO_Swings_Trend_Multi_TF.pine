@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.4
+// Version: 2.5
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -15,6 +15,10 @@
 //              - Multi-column dashboard showing all active TF analyses
 //
 // Changelog:
+//   v2.5 - 2026-03-27
+//     - Unknown trend displayed as "Range" (blue) instead of "?" (gray) in dashboard
+//     - Default parameters updated: TF1=15m, TF2=1H, TF3=4H, TF4=1D, all TFs enabled
+//     - TF2/TF4 draw icons off by default, TF1/TF3 draw icons on by default
 //   v2.4 - 2026-02-18
 //     - Close-based trend calculation: calcSwingsTrend uses pivot close prices instead of high/low
 //       to filter liquidity wicks (CHoCH, liquidity sweep, expansion remain on high/low)
@@ -61,25 +65,25 @@ pipValue             = input.float(0.1, "Pip Value ($)", minval=0.0001, step=0.0
 dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="General")
 
 // TF 1 (Primary - always enabled)
-swingTimeFrame1 = input.timeframe("60", "Timeframe", group="TF 1 (Primary)")
+swingTimeFrame1 = input.timeframe("15", "Timeframe", group="TF 1 (Primary)")
 drawSwingIcons1 = input.bool(true, "Draw Icons", group="TF 1 (Primary)")
 
 // TF 2
-enableTF2       = input.bool(false, "Enable", group="TF 2")
-swingTimeFrame2 = input.timeframe("240", "Timeframe", group="TF 2")
-drawSwingIcons2 = input.bool(true, "Draw Icons", group="TF 2")
+enableTF2       = input.bool(true, "Enable", group="TF 2")
+swingTimeFrame2 = input.timeframe("60", "Timeframe", group="TF 2")
+drawSwingIcons2 = input.bool(false, "Draw Icons", group="TF 2")
 iconColor2      = input.color(color.orange, "Icon Color", group="TF 2")
 
 // TF 3
-enableTF3       = input.bool(false, "Enable", group="TF 3")
-swingTimeFrame3 = input.timeframe("D", "Timeframe", group="TF 3")
+enableTF3       = input.bool(true, "Enable", group="TF 3")
+swingTimeFrame3 = input.timeframe("240", "Timeframe", group="TF 3")
 drawSwingIcons3 = input.bool(true, "Draw Icons", group="TF 3")
 iconColor3      = input.color(color.purple, "Icon Color", group="TF 3")
 
 // TF 4
-enableTF4       = input.bool(false, "Enable", group="TF 4")
-swingTimeFrame4 = input.timeframe("W", "Timeframe", group="TF 4")
-drawSwingIcons4 = input.bool(true, "Draw Icons", group="TF 4")
+enableTF4       = input.bool(true, "Enable", group="TF 4")
+swingTimeFrame4 = input.timeframe("D", "Timeframe", group="TF 4")
+drawSwingIcons4 = input.bool(false, "Draw Icons", group="TF 4")
 iconColor4      = input.color(color.aqua, "Icon Color", group="TF 4")
 
 // ===== Constants =====
@@ -544,8 +548,8 @@ fillDashboardColumn(table tbl, int col, string tfName, bool valid, bool enabled,
 
         // Trend
         string statusTxt = trendSt == MOMENTUM ? " (M)" : trendSt == COMPRESSION ? " (C)" : ""
-        string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "?"
-        color dirCol = direction == BULLISH ? color.lime : direction == BEARISH ? color.red : color.gray
+        string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "Range"
+        color dirCol = direction == BULLISH ? color.lime : direction == BEARISH ? color.red : color.blue
         table.cell(tbl, col, 1, dirTxt, text_color=dirCol, text_halign=text.align_center, text_size=size.small)
 
         // CHoCH
