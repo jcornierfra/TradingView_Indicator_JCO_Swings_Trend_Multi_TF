@@ -189,6 +189,10 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.7 - 2026-03-28
+- Fix CHoCH cross-TF inconsistency: `processAlternation` now uses HTF bar indices to decide swing alternation order, making the result independent of the chart timeframe (fixes permanent divergence between e.g. 15m and 1H views)
+- CHoCH line is now deleted when a new swing is detected without CHoCH, keeping the chart line and dashboard CHoCH column always in sync
+
 ### v2.6 - 2026-03-28
 - CHoCH line per TF: draws a horizontal line at the broken level from the swing peak bar (ph_1/pl_1) to the bar that broke the level (ph_0/pl_0)
 - Per-TF toggle parameter `drawChochLine1/2/3/4` (default true)

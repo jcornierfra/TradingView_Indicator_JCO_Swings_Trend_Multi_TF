@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.6
+// Version: 2.7
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -16,6 +16,12 @@
 //              - CHoCH lines per TF showing the broken level from swing peak to breakout bar
 //
 // Changelog:
+//   v2.7 - 2026-03-28
+//     - Fix CHoCH cross-TF inconsistency: processAlternation now uses HTF bar indices
+//       (returned by getPivotsHTF) to decide swing alternation order, making the result
+//       independent of the chart timeframe (was causing permanent divergence between e.g. 15m and 1H)
+//     - CHoCH line now deleted when a new swing is detected without CHoCH, keeping
+//       the chart line and dashboard CHoCH column always in sync
 //   v2.6 - 2026-03-28
 //     - CHoCH line per TF: draws a horizontal line at the broken level from the swing peak
 //       bar (ph_1/pl_1) to the bar that broke the level (ph_0/pl_0)
@@ -146,6 +152,8 @@ type SwingState
     int   prevAcceptedHighBar = na
     int   prevAcceptedLowBar = na
     line  lastChochLine = na
+    int   htfLastHighBar = na
+    int   htfLastLowBar  = na
 
 // ===== Timeframe validation =====
 int chartTFSeconds = timeframe.in_seconds(timeframe.period)
@@ -184,13 +192,17 @@ getPivotsHTF() =>
     float phClose0 = ta.valuewhen(isPivotHigh, close[rightBars], 0)
     float plClose0 = ta.valuewhen(isPivotLow, close[rightBars], 0)
 
-    [ph0, pl0, phClose0, plClose0]
+    // HTF bar index of the actual pivot candle (chart-TF-independent)
+    int phBar0 = ta.valuewhen(isPivotHigh, bar_index - rightBars, 0)
+    int plBar0 = ta.valuewhen(isPivotLow,  bar_index - rightBars, 0)
+
+    [ph0, pl0, phClose0, plClose0, phBar0, plBar0]
 
 // ===== Request data from all HTFs =====
-[rawPH0_1, rawPL0_1, rawPHClose_1, rawPLClose_1] = request.security(syminfo.tickerid, swingTimeFrame1, getPivotsHTF())
-[rawPH0_2, rawPL0_2, rawPHClose_2, rawPLClose_2] = request.security(syminfo.tickerid, swingTimeFrame2, getPivotsHTF())
-[rawPH0_3, rawPL0_3, rawPHClose_3, rawPLClose_3] = request.security(syminfo.tickerid, swingTimeFrame3, getPivotsHTF())
-[rawPH0_4, rawPL0_4, rawPHClose_4, rawPLClose_4] = request.security(syminfo.tickerid, swingTimeFrame4, getPivotsHTF())
+[rawPH0_1, rawPL0_1, rawPHClose_1, rawPLClose_1, rawPHBar_1, rawPLBar_1] = request.security(syminfo.tickerid, swingTimeFrame1, getPivotsHTF())
+[rawPH0_2, rawPL0_2, rawPHClose_2, rawPLClose_2, rawPHBar_2, rawPLBar_2] = request.security(syminfo.tickerid, swingTimeFrame2, getPivotsHTF())
+[rawPH0_3, rawPL0_3, rawPHClose_3, rawPLClose_3, rawPHBar_3, rawPLBar_3] = request.security(syminfo.tickerid, swingTimeFrame3, getPivotsHTF())
+[rawPH0_4, rawPL0_4, rawPHClose_4, rawPLClose_4, rawPHBar_4, rawPLBar_4] = request.security(syminfo.tickerid, swingTimeFrame4, getPivotsHTF())
 
 // ===== Helper functions for swing bar detection =====
 findSwingHighBar(float price, int lookback) =>
@@ -240,7 +252,7 @@ findHighestHighBetween(int olderBarIdx, int newerBarIdx) =>
     [resultPrice, resultBar, resultClose]
 
 // ===== Alternation processing (method on SwingState) =====
-method processAlternation(SwingState this, float rawPH0, float rawPL0, float rawPHClose, float rawPLClose, int lookback) =>
+method processAlternation(SwingState this, float rawPH0, float rawPL0, float rawPHClose, float rawPLClose, int lookback, int rawPHBar, int rawPLBar) =>
     bool rawHighChanged = not na(rawPH0) and (na(this.lastRawPH) or rawPH0 != this.lastRawPH)
     bool rawLowChanged  = not na(rawPL0) and (na(this.lastRawPL) or rawPL0 != this.lastRawPL)
     bool nSH = false
@@ -248,8 +260,14 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
     bool uSH = false
     bool uSL = false
 
+    // Determine last accepted swing type from HTF bar indices (chart-TF-independent)
+    // Falls back to lastWasHigh before HTF bars are available
+    bool effectiveLastWasHigh = na(this.htfLastHighBar) ? this.lastWasHigh : na(this.htfLastLowBar) ? true : this.htfLastHighBar > this.htfLastLowBar
+
     if rawHighChanged and rawLowChanged
-        if not this.lastWasHigh
+        // Use HTF bar indices to decide which pivot is more recent — deterministic on any chart TF
+        if rawPHBar > rawPLBar
+            // High is more recent → accept high as the new alternation step
             this.ph_4 := this.ph_3
             this.ph_3 := this.ph_2
             this.ph_2 := this.ph_1
@@ -265,7 +283,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastRawPHClose := rawPHClose
             this.prevAcceptedHighBar := this.lastAcceptedHighBar
             this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
+            this.htfLastHighBar := rawPHBar
         else
+            // Low is more recent → accept low as the new alternation step
             this.pl_4 := this.pl_3
             this.pl_3 := this.pl_2
             this.pl_2 := this.pl_1
@@ -281,8 +301,9 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastRawPLClose := rawPLClose
             this.prevAcceptedLowBar := this.lastAcceptedLowBar
             this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
+            this.htfLastLowBar := rawPLBar
     else if rawHighChanged
-        if not this.lastWasHigh
+        if not effectiveLastWasHigh
             this.ph_4 := this.ph_3
             this.ph_3 := this.ph_2
             this.ph_2 := this.ph_1
@@ -298,6 +319,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastRawPHClose := rawPHClose
             this.prevAcceptedHighBar := this.lastAcceptedHighBar
             this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
+            this.htfLastHighBar := rawPHBar
         else
             int newHighBar = findSwingHighBar(rawPH0, lookback)
             bool missingFound = false
@@ -316,6 +338,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     nSL := true
                     this.prevAcceptedLowBar := this.lastAcceptedLowBar
                     this.lastAcceptedLowBar := mBar
+                    this.htfLastLowBar := rawPHBar - 1
                     this.ph_4 := this.ph_3
                     this.ph_3 := this.ph_2
                     this.ph_2 := this.ph_1
@@ -328,6 +351,8 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     nSH := true
                     this.prevAcceptedHighBar := this.lastAcceptedHighBar
                     this.lastAcceptedHighBar := newHighBar
+                    this.htfLastHighBar := rawPHBar
+                    this.lastWasHigh := true
                     missingFound := true
             if not missingFound and not na(this.ph_0) and rawPH0 > this.ph_0
                 this.ph_0 := rawPH0
@@ -335,10 +360,11 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                 uSH := true
                 if not na(newHighBar)
                     this.lastAcceptedHighBar := newHighBar
+                this.htfLastHighBar := rawPHBar
             this.lastRawPH := rawPH0
             this.lastRawPHClose := rawPHClose
     else if rawLowChanged
-        if this.lastWasHigh
+        if effectiveLastWasHigh
             this.pl_4 := this.pl_3
             this.pl_3 := this.pl_2
             this.pl_2 := this.pl_1
@@ -354,6 +380,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastRawPLClose := rawPLClose
             this.prevAcceptedLowBar := this.lastAcceptedLowBar
             this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
+            this.htfLastLowBar := rawPLBar
         else
             int newLowBar = findSwingLowBar(rawPL0, lookback)
             bool missingFound = false
@@ -372,6 +399,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     nSH := true
                     this.prevAcceptedHighBar := this.lastAcceptedHighBar
                     this.lastAcceptedHighBar := mBar
+                    this.htfLastHighBar := rawPLBar - 1
                     this.pl_4 := this.pl_3
                     this.pl_3 := this.pl_2
                     this.pl_2 := this.pl_1
@@ -384,6 +412,8 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     nSL := true
                     this.prevAcceptedLowBar := this.lastAcceptedLowBar
                     this.lastAcceptedLowBar := newLowBar
+                    this.htfLastLowBar := rawPLBar
+                    this.lastWasHigh := false
                     missingFound := true
             if not missingFound and not na(this.pl_0) and rawPL0 < this.pl_0
                 this.pl_0 := rawPL0
@@ -391,6 +421,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                 uSL := true
                 if not na(newLowBar)
                     this.lastAcceptedLowBar := newLowBar
+                this.htfLastLowBar := rawPLBar
             this.lastRawPL := rawPL0
             this.lastRawPLClose := rawPLClose
     [nSH, nSL, uSH, uSL]
@@ -544,24 +575,31 @@ drawSwingIcons(SwingState st, bool newHigh, bool newLow, bool updHigh, bool updL
 
 // ===== Draw CHoCH line helper =====
 drawChochLine(SwingState st, int choch, bool newHigh, bool newLow, color bullCol, color bearCol, string styleStr, int lineWidth) =>
-    if (newHigh or newLow) and choch != CONTINUATION
-        if not na(st.lastChochLine)
-            line.delete(st.lastChochLine)
-        int fromBar = na
-        float level = na
-        int toBar = na
-        color lineCol = choch == CHOCH_BULLISH ? bullCol : bearCol
-        if choch == CHOCH_BULLISH and not na(st.ph_1) and not na(st.prevAcceptedHighBar) and not na(st.lastAcceptedHighBar)
-            fromBar := st.prevAcceptedHighBar
-            level    := st.ph_1
-            toBar    := st.lastAcceptedHighBar
-        else if choch == CHOCH_BEARISH and not na(st.pl_1) and not na(st.prevAcceptedLowBar) and not na(st.lastAcceptedLowBar)
-            fromBar := st.prevAcceptedLowBar
-            level    := st.pl_1
-            toBar    := st.lastAcceptedLowBar
-        if not na(fromBar) and not na(level) and not na(toBar)
-            string ls = styleStr == "dashed" ? line.style_dashed : styleStr == "dotted" ? line.style_dotted : line.style_solid
-            st.lastChochLine := line.new(fromBar, level, toBar, level, xloc=xloc.bar_index, color=lineCol, style=ls, width=lineWidth)
+    if newHigh or newLow
+        if choch != CONTINUATION
+            // New CHoCH detected: replace old line with new one
+            if not na(st.lastChochLine)
+                line.delete(st.lastChochLine)
+            int fromBar = na
+            float level = na
+            int toBar = na
+            color lineCol = choch == CHOCH_BULLISH ? bullCol : bearCol
+            if choch == CHOCH_BULLISH and not na(st.ph_1) and not na(st.prevAcceptedHighBar) and not na(st.lastAcceptedHighBar)
+                fromBar := st.prevAcceptedHighBar
+                level    := st.ph_1
+                toBar    := st.lastAcceptedHighBar
+            else if choch == CHOCH_BEARISH and not na(st.pl_1) and not na(st.prevAcceptedLowBar) and not na(st.lastAcceptedLowBar)
+                fromBar := st.prevAcceptedLowBar
+                level    := st.pl_1
+                toBar    := st.lastAcceptedLowBar
+            if not na(fromBar) and not na(level) and not na(toBar)
+                string ls = styleStr == "dashed" ? line.style_dashed : styleStr == "dotted" ? line.style_dotted : line.style_solid
+                st.lastChochLine := line.new(fromBar, level, toBar, level, xloc=xloc.bar_index, color=lineCol, style=ls, width=lineWidth)
+        else
+            // New swing but no CHoCH: remove the old line (dashboard shows Cont, no line visible)
+            if not na(st.lastChochLine)
+                line.delete(st.lastChochLine)
+                st.lastChochLine := na
     true
 
 // ===== Format timeframe for display =====
@@ -620,22 +658,22 @@ var SwingState state4 = SwingState.new()
 
 // ===== Process alternation for each TF =====
 [newSH1, newSL1, updSH1, updSL1] = if activeTF1
-    state1.processAlternation(rawPH0_1, rawPL0_1, rawPHClose_1, rawPLClose_1, htfLookback1)
+    state1.processAlternation(rawPH0_1, rawPL0_1, rawPHClose_1, rawPLClose_1, htfLookback1, rawPHBar_1, rawPLBar_1)
 else
     [false, false, false, false]
 
 [newSH2, newSL2, updSH2, updSL2] = if activeTF2
-    state2.processAlternation(rawPH0_2, rawPL0_2, rawPHClose_2, rawPLClose_2, htfLookback2)
+    state2.processAlternation(rawPH0_2, rawPL0_2, rawPHClose_2, rawPLClose_2, htfLookback2, rawPHBar_2, rawPLBar_2)
 else
     [false, false, false, false]
 
 [newSH3, newSL3, updSH3, updSL3] = if activeTF3
-    state3.processAlternation(rawPH0_3, rawPL0_3, rawPHClose_3, rawPLClose_3, htfLookback3)
+    state3.processAlternation(rawPH0_3, rawPL0_3, rawPHClose_3, rawPLClose_3, htfLookback3, rawPHBar_3, rawPLBar_3)
 else
     [false, false, false, false]
 
 [newSH4, newSL4, updSH4, updSL4] = if activeTF4
-    state4.processAlternation(rawPH0_4, rawPL0_4, rawPHClose_4, rawPLClose_4, htfLookback4)
+    state4.processAlternation(rawPH0_4, rawPL0_4, rawPHClose_4, rawPLClose_4, htfLookback4, rawPHBar_4, rawPLBar_4)
 else
     [false, false, false, false]
 
