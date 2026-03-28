@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.5
+// Version: 2.6
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -13,8 +13,16 @@
 //              - Liquidity sweep detection with close price confirmation and dual CHoCH
 //              - Swing alternation with automatic missing swing insertion
 //              - Multi-column dashboard showing all active TF analyses
+//              - CHoCH lines per TF showing the broken level from swing peak to breakout bar
 //
 // Changelog:
+//   v2.6 - 2026-03-28
+//     - CHoCH line per TF: draws a horizontal line at the broken level from the swing peak
+//       bar (ph_1/pl_1) to the bar that broke the level (ph_0/pl_0)
+//     - Per-TF toggle: drawChochLine1/2/3/4 (default true)
+//     - Global CHoCH line style (solid/dashed/dotted, default dashed) and width (1-4, default 1)
+//     - Line color matches icon color (red/green for TF1, iconColor for TF2-4)
+//     - Only the last CHoCH line per TF is kept (previous deleted on new CHoCH)
 //   v2.5 - 2026-03-27
 //     - Unknown trend displayed as "Range" (blue) instead of "?" (gray) in dashboard
 //     - Default parameters updated: TF1=15m, TF2=1H, TF3=4H, TF4=1D, all TFs enabled
@@ -63,27 +71,33 @@ displayDashboard     = input.bool(true, "Display Dashboard", group="General")
 displayExpansion     = input.bool(true, "Display Expansion", group="General")
 pipValue             = input.float(0.1, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Gold: 0.1, Forex majors: 0.0001", group="General")
 dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="General")
+chochLineStyle       = input.string("dashed", "CHoCH Line Style", options=["solid", "dashed", "dotted"], group="General")
+chochLineWidth       = input.int(1, "CHoCH Line Width", minval=1, maxval=4, group="General")
 
 // TF 1 (Primary - always enabled)
 swingTimeFrame1 = input.timeframe("15", "Timeframe", group="TF 1 (Primary)")
 drawSwingIcons1 = input.bool(true, "Draw Icons", group="TF 1 (Primary)")
+drawChochLine1  = input.bool(true, "Draw CHoCH Line", group="TF 1 (Primary)")
 
 // TF 2
 enableTF2       = input.bool(true, "Enable", group="TF 2")
 swingTimeFrame2 = input.timeframe("60", "Timeframe", group="TF 2")
 drawSwingIcons2 = input.bool(false, "Draw Icons", group="TF 2")
+drawChochLine2  = input.bool(true, "Draw CHoCH Line", group="TF 2")
 iconColor2      = input.color(color.orange, "Icon Color", group="TF 2")
 
 // TF 3
 enableTF3       = input.bool(true, "Enable", group="TF 3")
 swingTimeFrame3 = input.timeframe("240", "Timeframe", group="TF 3")
 drawSwingIcons3 = input.bool(true, "Draw Icons", group="TF 3")
+drawChochLine3  = input.bool(true, "Draw CHoCH Line", group="TF 3")
 iconColor3      = input.color(color.purple, "Icon Color", group="TF 3")
 
 // TF 4
 enableTF4       = input.bool(true, "Enable", group="TF 4")
 swingTimeFrame4 = input.timeframe("D", "Timeframe", group="TF 4")
 drawSwingIcons4 = input.bool(false, "Draw Icons", group="TF 4")
+drawChochLine4  = input.bool(true, "Draw CHoCH Line", group="TF 4")
 iconColor4      = input.color(color.aqua, "Icon Color", group="TF 4")
 
 // ===== Constants =====
@@ -129,6 +143,9 @@ type SwingState
     label lastSwingLowLabel = na
     int   lastAcceptedHighBar = na
     int   lastAcceptedLowBar = na
+    int   prevAcceptedHighBar = na
+    int   prevAcceptedLowBar = na
+    line  lastChochLine = na
 
 // ===== Timeframe validation =====
 int chartTFSeconds = timeframe.in_seconds(timeframe.period)
@@ -246,6 +263,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             nSH := true
             this.lastRawPH := rawPH0
             this.lastRawPHClose := rawPHClose
+            this.prevAcceptedHighBar := this.lastAcceptedHighBar
             this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
         else
             this.pl_4 := this.pl_3
@@ -261,6 +279,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             nSL := true
             this.lastRawPL := rawPL0
             this.lastRawPLClose := rawPLClose
+            this.prevAcceptedLowBar := this.lastAcceptedLowBar
             this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
     else if rawHighChanged
         if not this.lastWasHigh
@@ -277,6 +296,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             nSH := true
             this.lastRawPH := rawPH0
             this.lastRawPHClose := rawPHClose
+            this.prevAcceptedHighBar := this.lastAcceptedHighBar
             this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
         else
             int newHighBar = findSwingHighBar(rawPH0, lookback)
@@ -294,6 +314,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.plClose_1 := this.plClose_0
                     this.plClose_0 := mClose
                     nSL := true
+                    this.prevAcceptedLowBar := this.lastAcceptedLowBar
                     this.lastAcceptedLowBar := mBar
                     this.ph_4 := this.ph_3
                     this.ph_3 := this.ph_2
@@ -305,6 +326,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.phClose_1 := this.phClose_0
                     this.phClose_0 := rawPHClose
                     nSH := true
+                    this.prevAcceptedHighBar := this.lastAcceptedHighBar
                     this.lastAcceptedHighBar := newHighBar
                     missingFound := true
             if not missingFound and not na(this.ph_0) and rawPH0 > this.ph_0
@@ -330,6 +352,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             nSL := true
             this.lastRawPL := rawPL0
             this.lastRawPLClose := rawPLClose
+            this.prevAcceptedLowBar := this.lastAcceptedLowBar
             this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
         else
             int newLowBar = findSwingLowBar(rawPL0, lookback)
@@ -347,6 +370,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.phClose_1 := this.phClose_0
                     this.phClose_0 := mClose
                     nSH := true
+                    this.prevAcceptedHighBar := this.lastAcceptedHighBar
                     this.lastAcceptedHighBar := mBar
                     this.pl_4 := this.pl_3
                     this.pl_3 := this.pl_2
@@ -358,6 +382,7 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.plClose_1 := this.plClose_0
                     this.plClose_0 := rawPLClose
                     nSL := true
+                    this.prevAcceptedLowBar := this.lastAcceptedLowBar
                     this.lastAcceptedLowBar := newLowBar
                     missingFound := true
             if not missingFound and not na(this.pl_0) and rawPL0 < this.pl_0
@@ -517,6 +542,28 @@ drawSwingIcons(SwingState st, bool newHigh, bool newLow, bool updHigh, bool updL
                  color=color.new(color.white, 100), size=size.small)
     true
 
+// ===== Draw CHoCH line helper =====
+drawChochLine(SwingState st, int choch, bool newHigh, bool newLow, color bullCol, color bearCol, string styleStr, int lineWidth) =>
+    if (newHigh or newLow) and choch != CONTINUATION
+        if not na(st.lastChochLine)
+            line.delete(st.lastChochLine)
+        int fromBar = na
+        float level = na
+        int toBar = na
+        color lineCol = choch == CHOCH_BULLISH ? bullCol : bearCol
+        if choch == CHOCH_BULLISH and not na(st.ph_1) and not na(st.prevAcceptedHighBar) and not na(st.lastAcceptedHighBar)
+            fromBar := st.prevAcceptedHighBar
+            level    := st.ph_1
+            toBar    := st.lastAcceptedHighBar
+        else if choch == CHOCH_BEARISH and not na(st.pl_1) and not na(st.prevAcceptedLowBar) and not na(st.lastAcceptedLowBar)
+            fromBar := st.prevAcceptedLowBar
+            level    := st.pl_1
+            toBar    := st.lastAcceptedLowBar
+        if not na(fromBar) and not na(level) and not na(toBar)
+            string ls = styleStr == "dashed" ? line.style_dashed : styleStr == "dotted" ? line.style_dotted : line.style_solid
+            st.lastChochLine := line.new(fromBar, level, toBar, level, xloc=xloc.bar_index, color=lineCol, style=ls, width=lineWidth)
+    true
+
 // ===== Format timeframe for display =====
 formatTF(string tf) =>
     float mins = str.tonumber(tf)
@@ -673,6 +720,19 @@ if enableTF3 and drawSwingIcons3 and activeTF3
 
 if enableTF4 and drawSwingIcons4 and activeTF4
     drawSwingIcons(state4, newSH4, newSL4, updSH4, updSL4, iconColor4, iconColor4, swingIconGapPercent, htfLookback4)
+
+// ===== Draw CHoCH lines for each TF =====
+if drawChochLine1 and activeTF1
+    drawChochLine(state1, choch1, newSH1, newSL1, color.red, color.green, chochLineStyle, chochLineWidth)
+
+if enableTF2 and drawChochLine2 and activeTF2
+    drawChochLine(state2, choch2, newSH2, newSL2, iconColor2, iconColor2, chochLineStyle, chochLineWidth)
+
+if enableTF3 and drawChochLine3 and activeTF3
+    drawChochLine(state3, choch3, newSH3, newSL3, iconColor3, iconColor3, chochLineStyle, chochLineWidth)
+
+if enableTF4 and drawChochLine4 and activeTF4
+    drawChochLine(state4, choch4, newSH4, newSL4, iconColor4, iconColor4, chochLineStyle, chochLineWidth)
 
 // ===== Dashboard =====
 if displayDashboard and barstate.islast

@@ -189,6 +189,13 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.6 - 2026-03-28
+- CHoCH line per TF: draws a horizontal line at the broken level from the swing peak bar (ph_1/pl_1) to the bar that broke the level (ph_0/pl_0)
+- Per-TF toggle parameter `drawChochLine1/2/3/4` (default true)
+- Global CHoCH line style (solid/dashed/dotted, default dashed) and width (1-4, default 1)
+- Line color matches icon color (red/green for TF1, iconColor for TF2-4)
+- Only the last CHoCH line per TF is kept (previous deleted on new CHoCH)
+
 ### v2.5 - 2026-03-27
 - Unknown trend displayed as "Range" (blue) instead of "?" (gray) in dashboard
 - Default parameters updated: TF1=15m, TF2=1H, TF3=4H, TF4=1D, all TFs enabled by default
