@@ -633,7 +633,7 @@ fillDashboardColumn(table tbl, int col, string tfName, bool valid, bool enabled,
 
         // Trend
         string statusTxt = trendSt == MOMENTUM ? " (M)" : trendSt == COMPRESSION ? " (C)" : ""
-        string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "Range"
+        string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "?"
         color dirCol = direction == BULLISH ? color.lime : direction == BEARISH ? color.red : color.blue
         table.cell(tbl, col, 1, dirTxt, text_color=dirCol, text_halign=text.align_center, text_size=size.small)
 
