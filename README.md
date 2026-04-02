@@ -189,6 +189,10 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.8 - 2026-04-02
+- Fix historical buffer overflow when using Daily (or higher) TF on a lower chart timeframe (e.g. Daily swings on 1H chart): added `max_bars_back(high/low/close, 1000)` and clamped dynamic lookback in `findHighestHighBetween` / `findLowestLowBetween` to 999, so the search silently caps at the accessible range instead of throwing a runtime error
+- Dashboard: revert unknown trend display from "Range" back to "?" — "?" better conveys uncertainty/waiting for confirmation; not all undetermined cases are ranging markets
+
 ### v2.7 - 2026-03-28
 - Fix CHoCH cross-TF inconsistency: `processAlternation` now uses HTF bar indices to decide swing alternation order, making the result independent of the chart timeframe (fixes permanent divergence between e.g. 15m and 1H views)
 - CHoCH line is now deleted when a new swing is detected without CHoCH, keeping the chart line and dashboard CHoCH column always in sync

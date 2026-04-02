@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.7
+// Version: 2.8
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -16,6 +16,13 @@
 //              - CHoCH lines per TF showing the broken level from swing peak to breakout bar
 //
 // Changelog:
+//   v2.8 - 2026-04-02
+//     - Fix historical buffer overflow when using Daily (or higher) TF on a lower chart TF
+//       (e.g. Daily swings on 1H chart): added max_bars_back(high/low/close, 1000) and
+//       clamp startLb in findHighestHighBetween/findLowestLowBetween to MAX_BARS_BACK-1
+//       so the search silently caps at the accessible range instead of throwing a runtime error
+//     - Dashboard: revert unknown trend display from "Range" back to "?" — "?" better conveys
+//       uncertainty/waiting for confirmation; not all undetermined cases are ranging markets
 //   v2.7 - 2026-03-28
 //     - Fix CHoCH cross-TF inconsistency: processAlternation now uses HTF bar indices
 //       (returned by getPivotsHTF) to decide swing alternation order, making the result
@@ -68,6 +75,14 @@
 
 //@version=6
 indicator("JCO Swings Trend Multi TF", overlay=true, max_labels_count=500)
+
+// Guarantee a historical buffer deep enough for HTF pivot searches on lower chart TFs
+// (e.g. Daily swings on a 1H chart). Dynamic accesses in findHighestHighBetween /
+// findLowestLowBetween are clamped to MAX_BARS_BACK - 1 to avoid runtime errors.
+int MAX_BARS_BACK = 1000
+max_bars_back(high,  MAX_BARS_BACK)
+max_bars_back(low,   MAX_BARS_BACK)
+max_bars_back(close, MAX_BARS_BACK)
 
 // ===== Inputs =====
 // General (common to all TFs)
@@ -226,7 +241,7 @@ findLowestLowBetween(int olderBarIdx, int newerBarIdx) =>
     int resultBar = na
     float resultClose = na
     if not na(olderBarIdx) and not na(newerBarIdx) and newerBarIdx > olderBarIdx + 1
-        int startLb = bar_index - olderBarIdx - 1
+        int startLb = math.min(bar_index - olderBarIdx - 1, MAX_BARS_BACK - 1)
         int endLb = bar_index - newerBarIdx + 1
         for i = endLb to startLb
             if i >= 0
@@ -241,7 +256,7 @@ findHighestHighBetween(int olderBarIdx, int newerBarIdx) =>
     int resultBar = na
     float resultClose = na
     if not na(olderBarIdx) and not na(newerBarIdx) and newerBarIdx > olderBarIdx + 1
-        int startLb = bar_index - olderBarIdx - 1
+        int startLb = math.min(bar_index - olderBarIdx - 1, MAX_BARS_BACK - 1)
         int endLb = bar_index - newerBarIdx + 1
         for i = endLb to startLb
             if i >= 0
