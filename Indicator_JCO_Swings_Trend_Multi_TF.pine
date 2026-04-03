@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.8
+// Version: 2.9
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -12,10 +12,17 @@
 //              - CHoCH-gated trend reversals to prevent premature trend changes
 //              - Liquidity sweep detection with close price confirmation and dual CHoCH
 //              - Swing alternation with automatic missing swing insertion
-//              - Multi-column dashboard showing all active TF analyses
+//              - Multi-column dashboard showing only active TF columns
 //              - CHoCH lines per TF showing the broken level from swing peak to breakout bar
 //
 // Changelog:
+//   v2.9 - 2026-04-03
+//     - Configurable icon color for TF1 (replaces hardcoded red/green, default silver)
+//     - Per-TF icon gap parameter (replaces single global gap): TF1=0.05%, TF2=0.1%,
+//       TF3=0.15%, TF4=0.2% — allows staggered icons when multiple TFs share the same candle
+//     - Dashboard hides disabled TF columns (dynamic column count); only enabled TFs shown
+//     - Draw Icons enabled by default for all TFs
+//     - Pip Value default changed from 0.1 to 1.0 (display expansion in points by default)
 //   v2.8 - 2026-04-02
 //     - Fix historical buffer overflow when using Daily (or higher) TF on a lower chart TF
 //       (e.g. Daily swings on 1H chart): added max_bars_back(high/low/close, 1000) and
@@ -87,7 +94,6 @@ max_bars_back(close, MAX_BARS_BACK)
 // ===== Inputs =====
 // General (common to all TFs)
 swingPeriod          = input.int(5, "Swing Period", minval=3, group="General")
-swingIconGapPercent  = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="General")
 displayDashboard     = input.bool(true, "Display Dashboard", group="General")
 displayExpansion     = input.bool(true, "Display Expansion", group="General")
 pipValue             = input.float(1.0, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Use 1 to display expansion in points. Gold: 0.1, Forex majors: 0.0001", group="General")
@@ -96,31 +102,35 @@ chochLineStyle       = input.string("dashed", "CHoCH Line Style", options=["soli
 chochLineWidth       = input.int(1, "CHoCH Line Width", minval=1, maxval=4, group="General")
 
 // TF 1 (Primary - always enabled)
-swingTimeFrame1 = input.timeframe("15", "Timeframe", group="TF 1 (Primary)")
-drawSwingIcons1 = input.bool(true, "Draw Icons", group="TF 1 (Primary)")
-drawChochLine1  = input.bool(true, "Draw CHoCH Line", group="TF 1 (Primary)")
-iconColor1      = input.color(color.silver, "Icon Color", group="TF 1 (Primary)")
+swingTimeFrame1  = input.timeframe("15", "Timeframe", group="TF 1 (Primary)")
+drawSwingIcons1  = input.bool(true, "Draw Icons", group="TF 1 (Primary)")
+drawChochLine1   = input.bool(true, "Draw CHoCH Line", group="TF 1 (Primary)")
+iconColor1       = input.color(color.silver, "Icon Color", group="TF 1 (Primary)")
+iconGapPercent1  = input.float(0.05, "Icon Gap (% of price)", minval=0.01, maxval=2.0, step=0.01, group="TF 1 (Primary)")
 
 // TF 2
-enableTF2       = input.bool(true, "Enable", group="TF 2")
-swingTimeFrame2 = input.timeframe("60", "Timeframe", group="TF 2")
-drawSwingIcons2 = input.bool(true, "Draw Icons", group="TF 2")
-drawChochLine2  = input.bool(true, "Draw CHoCH Line", group="TF 2")
-iconColor2      = input.color(color.orange, "Icon Color", group="TF 2")
+enableTF2        = input.bool(true, "Enable", group="TF 2")
+swingTimeFrame2  = input.timeframe("60", "Timeframe", group="TF 2")
+drawSwingIcons2  = input.bool(true, "Draw Icons", group="TF 2")
+drawChochLine2   = input.bool(true, "Draw CHoCH Line", group="TF 2")
+iconColor2       = input.color(color.orange, "Icon Color", group="TF 2")
+iconGapPercent2  = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=2.0, step=0.01, group="TF 2")
 
 // TF 3
-enableTF3       = input.bool(true, "Enable", group="TF 3")
-swingTimeFrame3 = input.timeframe("240", "Timeframe", group="TF 3")
-drawSwingIcons3 = input.bool(true, "Draw Icons", group="TF 3")
-drawChochLine3  = input.bool(true, "Draw CHoCH Line", group="TF 3")
-iconColor3      = input.color(color.purple, "Icon Color", group="TF 3")
+enableTF3        = input.bool(true, "Enable", group="TF 3")
+swingTimeFrame3  = input.timeframe("240", "Timeframe", group="TF 3")
+drawSwingIcons3  = input.bool(true, "Draw Icons", group="TF 3")
+drawChochLine3   = input.bool(true, "Draw CHoCH Line", group="TF 3")
+iconColor3       = input.color(color.purple, "Icon Color", group="TF 3")
+iconGapPercent3  = input.float(0.15, "Icon Gap (% of price)", minval=0.01, maxval=2.0, step=0.01, group="TF 3")
 
 // TF 4
-enableTF4       = input.bool(true, "Enable", group="TF 4")
-swingTimeFrame4 = input.timeframe("D", "Timeframe", group="TF 4")
-drawSwingIcons4 = input.bool(true, "Draw Icons", group="TF 4")
-drawChochLine4  = input.bool(true, "Draw CHoCH Line", group="TF 4")
-iconColor4      = input.color(color.aqua, "Icon Color", group="TF 4")
+enableTF4        = input.bool(true, "Enable", group="TF 4")
+swingTimeFrame4  = input.timeframe("D", "Timeframe", group="TF 4")
+drawSwingIcons4  = input.bool(true, "Draw Icons", group="TF 4")
+drawChochLine4   = input.bool(true, "Draw CHoCH Line", group="TF 4")
+iconColor4       = input.color(color.aqua, "Icon Color", group="TF 4")
+iconGapPercent4  = input.float(0.2, "Icon Gap (% of price)", minval=0.01, maxval=2.0, step=0.01, group="TF 4")
 
 // ===== Constants =====
 int NODIRECTION    = 0
@@ -764,16 +774,16 @@ bool liqSweep4 = activeTF4 ? (gatedLiqSweep4 or calcLiquiditySweep(dir4, state4.
 
 // ===== Draw icons for each TF =====
 if drawSwingIcons1 and activeTF1
-    drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, iconColor1, iconColor1, swingIconGapPercent, htfLookback1)
+    drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, iconColor1, iconColor1, iconGapPercent1, htfLookback1)
 
 if enableTF2 and drawSwingIcons2 and activeTF2
-    drawSwingIcons(state2, newSH2, newSL2, updSH2, updSL2, iconColor2, iconColor2, swingIconGapPercent, htfLookback2)
+    drawSwingIcons(state2, newSH2, newSL2, updSH2, updSL2, iconColor2, iconColor2, iconGapPercent2, htfLookback2)
 
 if enableTF3 and drawSwingIcons3 and activeTF3
-    drawSwingIcons(state3, newSH3, newSL3, updSH3, updSL3, iconColor3, iconColor3, swingIconGapPercent, htfLookback3)
+    drawSwingIcons(state3, newSH3, newSL3, updSH3, updSL3, iconColor3, iconColor3, iconGapPercent3, htfLookback3)
 
 if enableTF4 and drawSwingIcons4 and activeTF4
-    drawSwingIcons(state4, newSH4, newSL4, updSH4, updSL4, iconColor4, iconColor4, swingIconGapPercent, htfLookback4)
+    drawSwingIcons(state4, newSH4, newSL4, updSH4, updSL4, iconColor4, iconColor4, iconGapPercent4, htfLookback4)
 
 // ===== Draw CHoCH lines for each TF =====
 if drawChochLine1 and activeTF1

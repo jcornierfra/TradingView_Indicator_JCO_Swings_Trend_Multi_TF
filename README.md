@@ -189,6 +189,13 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.9 - 2026-04-03
+- Configurable icon color for TF1 (replaces hardcoded red/green, default silver) — consistent with TF2-4
+- Per-TF icon gap parameter (replaces single global gap): TF1=0.05%, TF2=0.1%, TF3=0.15%, TF4=0.2% — allows staggered icons when multiple TFs land on the same candle
+- Dashboard hides disabled TF columns: dynamic table width shows only enabled TFs
+- Draw Icons enabled by default for all TFs
+- Pip Value default changed from 0.1 to 1.0 (expansion displayed in points by default; tooltip updated)
+
 ### v2.8 - 2026-04-02
 - Fix historical buffer overflow when using Daily (or higher) TF on a lower chart timeframe (e.g. Daily swings on 1H chart): added `max_bars_back(high/low/close, 1000)` and clamped dynamic lookback in `findHighestHighBetween` / `findLowestLowBetween` to 999, so the search silently caps at the accessible range instead of throwing a runtime error
 - Dashboard: revert unknown trend display from "Range" back to "?" — "?" better conveys uncertainty/waiting for confirmation; not all undetermined cases are ranging markets
