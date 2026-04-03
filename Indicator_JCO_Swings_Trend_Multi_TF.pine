@@ -34,7 +34,7 @@
 //       bar (ph_1/pl_1) to the bar that broke the level (ph_0/pl_0)
 //     - Per-TF toggle: drawChochLine1/2/3/4 (default true)
 //     - Global CHoCH line style (solid/dashed/dotted, default dashed) and width (1-4, default 1)
-//     - Line color matches icon color (red/green for TF1, iconColor for TF2-4)
+//     - Line color matches icon color (iconColor for all TFs)
 //     - Only the last CHoCH line per TF is kept (previous deleted on new CHoCH)
 //   v2.5 - 2026-03-27
 //     - Unknown trend displayed as "Range" (blue) instead of "?" (gray) in dashboard
@@ -90,7 +90,7 @@ swingPeriod          = input.int(5, "Swing Period", minval=3, group="General")
 swingIconGapPercent  = input.float(0.1, "Icon Gap (% of price)", minval=0.01, maxval=1.0, step=0.01, group="General")
 displayDashboard     = input.bool(true, "Display Dashboard", group="General")
 displayExpansion     = input.bool(true, "Display Expansion", group="General")
-pipValue             = input.float(0.1, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Gold: 0.1, Forex majors: 0.0001", group="General")
+pipValue             = input.float(1.0, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Use 1 to display expansion in points. Gold: 0.1, Forex majors: 0.0001", group="General")
 dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="General")
 chochLineStyle       = input.string("dashed", "CHoCH Line Style", options=["solid", "dashed", "dotted"], group="General")
 chochLineWidth       = input.int(1, "CHoCH Line Width", minval=1, maxval=4, group="General")
@@ -99,11 +99,12 @@ chochLineWidth       = input.int(1, "CHoCH Line Width", minval=1, maxval=4, grou
 swingTimeFrame1 = input.timeframe("15", "Timeframe", group="TF 1 (Primary)")
 drawSwingIcons1 = input.bool(true, "Draw Icons", group="TF 1 (Primary)")
 drawChochLine1  = input.bool(true, "Draw CHoCH Line", group="TF 1 (Primary)")
+iconColor1      = input.color(color.silver, "Icon Color", group="TF 1 (Primary)")
 
 // TF 2
 enableTF2       = input.bool(true, "Enable", group="TF 2")
 swingTimeFrame2 = input.timeframe("60", "Timeframe", group="TF 2")
-drawSwingIcons2 = input.bool(false, "Draw Icons", group="TF 2")
+drawSwingIcons2 = input.bool(true, "Draw Icons", group="TF 2")
 drawChochLine2  = input.bool(true, "Draw CHoCH Line", group="TF 2")
 iconColor2      = input.color(color.orange, "Icon Color", group="TF 2")
 
@@ -117,7 +118,7 @@ iconColor3      = input.color(color.purple, "Icon Color", group="TF 3")
 // TF 4
 enableTF4       = input.bool(true, "Enable", group="TF 4")
 swingTimeFrame4 = input.timeframe("D", "Timeframe", group="TF 4")
-drawSwingIcons4 = input.bool(false, "Draw Icons", group="TF 4")
+drawSwingIcons4 = input.bool(true, "Draw Icons", group="TF 4")
 drawChochLine4  = input.bool(true, "Draw CHoCH Line", group="TF 4")
 iconColor4      = input.color(color.aqua, "Icon Color", group="TF 4")
 
@@ -763,7 +764,7 @@ bool liqSweep4 = activeTF4 ? (gatedLiqSweep4 or calcLiquiditySweep(dir4, state4.
 
 // ===== Draw icons for each TF =====
 if drawSwingIcons1 and activeTF1
-    drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, color.red, color.green, swingIconGapPercent, htfLookback1)
+    drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, iconColor1, iconColor1, swingIconGapPercent, htfLookback1)
 
 if enableTF2 and drawSwingIcons2 and activeTF2
     drawSwingIcons(state2, newSH2, newSL2, updSH2, updSL2, iconColor2, iconColor2, swingIconGapPercent, htfLookback2)
@@ -776,7 +777,7 @@ if enableTF4 and drawSwingIcons4 and activeTF4
 
 // ===== Draw CHoCH lines for each TF =====
 if drawChochLine1 and activeTF1
-    drawChochLine(state1, choch1, newSH1, newSL1, color.red, color.green, chochLineStyle, chochLineWidth)
+    drawChochLine(state1, choch1, newSH1, newSL1, iconColor1, iconColor1, chochLineStyle, chochLineWidth)
 
 if enableTF2 and drawChochLine2 and activeTF2
     drawChochLine(state2, choch2, newSH2, newSL2, iconColor2, iconColor2, chochLineStyle, chochLineWidth)
@@ -790,7 +791,8 @@ if enableTF4 and drawChochLine4 and activeTF4
 // ===== Dashboard =====
 if displayDashboard and barstate.islast
     int numRows = displayExpansion ? 5 : 4
-    var table dashboard = table.new(position.top_right, 5, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
+    int numTFCols = 1 + (enableTF2 ? 1 : 0) + (enableTF3 ? 1 : 0) + (enableTF4 ? 1 : 0)
+    var table dashboard = table.new(position.top_right, numTFCols + 1, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
 
     // Label column (col 0)
     table.cell(dashboard, 0, 0, "", text_size=size.small)
@@ -831,12 +833,15 @@ if displayDashboard and barstate.islast
     array<int>    tfChoch    = array.from(choch1, choch2, choch3, choch4)
     array<bool>   tfLiqSweep = array.from(liqSweep1, liqSweep2, liqSweep3, liqSweep4)
     array<float>  tfExp      = array.from(exp1, exp2, exp3, exp4)
-    array<color>  tfColor    = array.from(color.gray, iconColor2, iconColor3, iconColor4)
+    array<color>  tfColor    = array.from(iconColor1, iconColor2, iconColor3, iconColor4)
 
-    // Fill TF columns in sorted order (smallest TF left, largest right)
-    for col = 0 to 3
-        int idx = array.get(order, col)
-        fillDashboardColumn(dashboard, col + 1, array.get(tfNames, idx), array.get(tfValid, idx), array.get(tfEnabled, idx), array.get(tfDir, idx), array.get(tfStatus, idx), array.get(tfChoch, idx), array.get(tfLiqSweep, idx), array.get(tfExp, idx), array.get(tfColor, idx))
+    // Fill enabled TF columns in sorted order (smallest TF left, largest right, disabled TFs hidden)
+    int col = 1
+    for i = 0 to 3
+        int idx = array.get(order, i)
+        if array.get(tfEnabled, idx)
+            fillDashboardColumn(dashboard, col, array.get(tfNames, idx), array.get(tfValid, idx), true, array.get(tfDir, idx), array.get(tfStatus, idx), array.get(tfChoch, idx), array.get(tfLiqSweep, idx), array.get(tfExp, idx), array.get(tfColor, idx))
+            col += 1
 
 // ===== Plot hidden values for alerts =====
 plot(dir1, "Trend Direction TF1", display=display.none)
