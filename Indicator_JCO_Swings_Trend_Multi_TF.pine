@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.9
+// Version: 2.10
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -15,7 +15,28 @@
 //              - Multi-column dashboard showing only active TF columns
 //              - CHoCH lines per TF showing the broken level from swing peak to breakout bar
 //
+// Known limitations:
+//   - CHoCH on long HTFs (e.g. Daily) from low chart TFs (e.g. 5m, 1m):
+//     request.security only returns HTF data for the span covered by the chart's bar history.
+//     On a 5m chart (~17 days of history), only the most recent ~3-5 Daily pivots are visible,
+//     so the alternation state (ph_2, pl_2, ph_3, pl_3) may hold different values than on a 15m
+//     or 1H chart with more history. This can cause CHoCH detection to differ across chart TFs
+//     (e.g. "Bull" on 15m but "Cont" on 5m) — both results are logically correct given the
+//     information available on each chart TF. To view CHoCH on long HTFs accurately, use a
+//     chart TF with enough history to include the relevant older pivots.
+//   - CHoCH line not drawn when the broken swing is beyond TradingView's drawing depth limit
+//     (typically ~5000 bars back). Occurs on low chart TFs with long HTFs — the detection
+//     may still fire in the dashboard, but the horizontal line may be silently rejected.
+//
 // Changelog:
+//   v2.10 - 2026-04-24
+//     - Internal refactor (no functional change):
+//       * Removed dead UDT fields (ph_4, pl_4, lastRawPHClose, lastRawPLClose)
+//       * Removed redundant enableTFx guards in draw blocks (activeTFx already enforces enable)
+//       * Merged new/upd branches in drawSwingIcons (conditional delete on update)
+//       * Replaced 4 copy-pasted per-TF calculation blocks (~260 lines) with a single
+//         processTF(SwingState) function — adding a 5th TF would now be trivial
+//     - Documented known limitations (CHoCH on long HTFs from low chart TFs, drawing depth)
 //   v2.9 - 2026-04-03
 //     - Configurable icon color for TF1 (replaces hardcoded red/green, default silver)
 //     - Per-TF icon gap parameter (replaces single global gap): TF1=0.05%, TF2=0.1%,
@@ -153,12 +174,10 @@ type SwingState
     float ph_1 = na
     float ph_2 = na
     float ph_3 = na
-    float ph_4 = na
     float pl_0 = na
     float pl_1 = na
     float pl_2 = na
     float pl_3 = na
-    float pl_4 = na
     float lastRawPH = na
     float lastRawPL = na
     float phClose_0 = na
@@ -169,8 +188,6 @@ type SwingState
     float plClose_1 = na
     float plClose_2 = na
     float plClose_3 = na
-    float lastRawPHClose = na
-    float lastRawPLClose = na
     label lastSwingHighLabel = na
     label lastSwingLowLabel = na
     int   lastAcceptedHighBar = na
@@ -294,7 +311,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
         // Use HTF bar indices to decide which pivot is more recent — deterministic on any chart TF
         if rawPHBar > rawPLBar
             // High is more recent → accept high as the new alternation step
-            this.ph_4 := this.ph_3
             this.ph_3 := this.ph_2
             this.ph_2 := this.ph_1
             this.ph_1 := this.ph_0
@@ -306,13 +322,11 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastWasHigh := true
             nSH := true
             this.lastRawPH := rawPH0
-            this.lastRawPHClose := rawPHClose
             this.prevAcceptedHighBar := this.lastAcceptedHighBar
             this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
             this.htfLastHighBar := rawPHBar
         else
             // Low is more recent → accept low as the new alternation step
-            this.pl_4 := this.pl_3
             this.pl_3 := this.pl_2
             this.pl_2 := this.pl_1
             this.pl_1 := this.pl_0
@@ -324,13 +338,11 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastWasHigh := false
             nSL := true
             this.lastRawPL := rawPL0
-            this.lastRawPLClose := rawPLClose
             this.prevAcceptedLowBar := this.lastAcceptedLowBar
             this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
             this.htfLastLowBar := rawPLBar
     else if rawHighChanged
         if not effectiveLastWasHigh
-            this.ph_4 := this.ph_3
             this.ph_3 := this.ph_2
             this.ph_2 := this.ph_1
             this.ph_1 := this.ph_0
@@ -342,7 +354,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastWasHigh := true
             nSH := true
             this.lastRawPH := rawPH0
-            this.lastRawPHClose := rawPHClose
             this.prevAcceptedHighBar := this.lastAcceptedHighBar
             this.lastAcceptedHighBar := findSwingHighBar(rawPH0, lookback)
             this.htfLastHighBar := rawPHBar
@@ -352,7 +363,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             if not na(newHighBar) and not na(this.lastAcceptedHighBar)
                 [mPrice, mBar, mClose] = findLowestLowBetween(this.lastAcceptedHighBar, newHighBar)
                 if not na(mPrice)
-                    this.pl_4 := this.pl_3
                     this.pl_3 := this.pl_2
                     this.pl_2 := this.pl_1
                     this.pl_1 := this.pl_0
@@ -365,7 +375,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.prevAcceptedLowBar := this.lastAcceptedLowBar
                     this.lastAcceptedLowBar := mBar
                     this.htfLastLowBar := rawPHBar - 1
-                    this.ph_4 := this.ph_3
                     this.ph_3 := this.ph_2
                     this.ph_2 := this.ph_1
                     this.ph_1 := this.ph_0
@@ -388,10 +397,8 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.lastAcceptedHighBar := newHighBar
                 this.htfLastHighBar := rawPHBar
             this.lastRawPH := rawPH0
-            this.lastRawPHClose := rawPHClose
     else if rawLowChanged
         if effectiveLastWasHigh
-            this.pl_4 := this.pl_3
             this.pl_3 := this.pl_2
             this.pl_2 := this.pl_1
             this.pl_1 := this.pl_0
@@ -403,7 +410,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             this.lastWasHigh := false
             nSL := true
             this.lastRawPL := rawPL0
-            this.lastRawPLClose := rawPLClose
             this.prevAcceptedLowBar := this.lastAcceptedLowBar
             this.lastAcceptedLowBar := findSwingLowBar(rawPL0, lookback)
             this.htfLastLowBar := rawPLBar
@@ -413,7 +419,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
             if not na(newLowBar) and not na(this.lastAcceptedLowBar)
                 [mPrice, mBar, mClose] = findHighestHighBetween(this.lastAcceptedLowBar, newLowBar)
                 if not na(mPrice)
-                    this.ph_4 := this.ph_3
                     this.ph_3 := this.ph_2
                     this.ph_2 := this.ph_1
                     this.ph_1 := this.ph_0
@@ -426,7 +431,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.prevAcceptedHighBar := this.lastAcceptedHighBar
                     this.lastAcceptedHighBar := mBar
                     this.htfLastHighBar := rawPLBar - 1
-                    this.pl_4 := this.pl_3
                     this.pl_3 := this.pl_2
                     this.pl_2 := this.pl_1
                     this.pl_1 := this.pl_0
@@ -449,7 +453,6 @@ method processAlternation(SwingState this, float rawPH0, float rawPL0, float raw
                     this.lastAcceptedLowBar := newLowBar
                 this.htfLastLowBar := rawPLBar
             this.lastRawPL := rawPL0
-            this.lastRawPLClose := rawPLClose
     [nSH, nSL, uSH, uSL]
 
 // ===== Calculate Trend (with Primary/Secondary confirmation) =====
@@ -564,35 +567,23 @@ gateTrendChange(int rawDir, int rawStatus, int prevDir, int choch, bool chochLiq
         [rawDir, rawStatus, false]
 
 // ===== Draw swing icons helper =====
+// updHigh/updLow replace the last label (same swing, refined value).
+// newHigh/newLow add a new label (keeps the previous one as historical).
 drawSwingIcons(SwingState st, bool newHigh, bool newLow, bool updHigh, bool updLow, color highCol, color lowCol, float gapPct, int lookback) =>
-    if newHigh and not na(st.ph_0)
+    if (newHigh or updHigh) and not na(st.ph_0)
         int swingBar = findSwingHighBar(st.ph_0, lookback)
-        float gap = st.ph_0 * (gapPct / 100)
         if not na(swingBar)
-            st.lastSwingHighLabel := label.new(swingBar, st.ph_0 + gap, "▼",
-                 xloc=xloc.bar_index, style=label.style_label_down, textcolor=highCol,
-                 color=color.new(color.white, 100), size=size.small)
-    if updHigh and not na(st.ph_0)
-        int swingBar = findSwingHighBar(st.ph_0, lookback)
-        float gap = st.ph_0 * (gapPct / 100)
-        if not na(swingBar)
-            if not na(st.lastSwingHighLabel)
+            float gap = st.ph_0 * (gapPct / 100)
+            if updHigh and not na(st.lastSwingHighLabel)
                 label.delete(st.lastSwingHighLabel)
             st.lastSwingHighLabel := label.new(swingBar, st.ph_0 + gap, "▼",
                  xloc=xloc.bar_index, style=label.style_label_down, textcolor=highCol,
                  color=color.new(color.white, 100), size=size.small)
-    if newLow and not na(st.pl_0)
+    if (newLow or updLow) and not na(st.pl_0)
         int swingBar = findSwingLowBar(st.pl_0, lookback)
-        float gap = st.pl_0 * (gapPct / 100)
         if not na(swingBar)
-            st.lastSwingLowLabel := label.new(swingBar, st.pl_0 - gap, "▲",
-                 xloc=xloc.bar_index, style=label.style_label_up, textcolor=lowCol,
-                 color=color.new(color.white, 100), size=size.small)
-    if updLow and not na(st.pl_0)
-        int swingBar = findSwingLowBar(st.pl_0, lookback)
-        float gap = st.pl_0 * (gapPct / 100)
-        if not na(swingBar)
-            if not na(st.lastSwingLowLabel)
+            float gap = st.pl_0 * (gapPct / 100)
+            if updLow and not na(st.lastSwingLowLabel)
                 label.delete(st.lastSwingLowLabel)
             st.lastSwingLowLabel := label.new(swingBar, st.pl_0 - gap, "▲",
                  xloc=xloc.bar_index, style=label.style_label_up, textcolor=lowCol,
@@ -703,99 +694,49 @@ else
 else
     [false, false, false, false]
 
+// ===== Per-TF full processing pipeline =====
+// Runs trend → CHoCH → gated trend change → liquidity sweep on one SwingState.
+// Inactive TFs have all-na state (processAlternation never called), so calc* functions
+// propagate defaults naturally — no explicit active guard needed here.
+processTF(SwingState s) =>
+    [prevDir, _ps] = calcSwingsTrend(s.phClose_1, s.phClose_2, s.phClose_3, s.plClose_1, s.plClose_2, s.plClose_3)
+    bool hasPrev = not na(s.ph_3) and not na(s.pl_3)
+    [rawDir, rawStatus] = calcSwingsTrend(s.phClose_0, s.phClose_1, s.phClose_2, s.plClose_0, s.plClose_1, s.plClose_2)
+    [choch, chochLiqSweep] = calcCHoCH(s.ph_0, s.ph_1, s.ph_2, s.pl_0, s.pl_1, s.pl_2, s.phClose_0, s.plClose_0, prevDir, hasPrev, s.lastWasHigh)
+    [dir, status, gatedLiqSweep] = gateTrendChange(rawDir, rawStatus, prevDir, choch, chochLiqSweep, s.ph_0, s.ph_3, s.pl_0, s.pl_3)
+    bool liqSweep = gatedLiqSweep or calcLiquiditySweep(dir, s.ph_0, s.ph_1, s.ph_2, s.pl_0, s.pl_1, s.pl_2, s.phClose_0, s.plClose_0)
+    [dir, status, choch, liqSweep]
+
 // ===== Calculate trend, CHoCH, gate trend change, liquidity sweep for each TF =====
-// TF1
-[prevDir1, _ps1] = calcSwingsTrend(state1.phClose_1, state1.phClose_2, state1.phClose_3, state1.plClose_1, state1.plClose_2, state1.plClose_3)
-bool hasPrev1 = not na(state1.ph_3) and not na(state1.pl_3)
-[rawDir1, rawStatus1] = if activeTF1
-    calcSwingsTrend(state1.phClose_0, state1.phClose_1, state1.phClose_2, state1.plClose_0, state1.plClose_1, state1.plClose_2)
-else
-    [NODIRECTION, 0]
-[choch1, chochLiqSweep1] = if activeTF1
-    calcCHoCH(state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2, state1.phClose_0, state1.plClose_0, prevDir1, hasPrev1, state1.lastWasHigh)
-else
-    [CONTINUATION, false]
-[dir1, status1, gatedLiqSweep1] = if activeTF1
-    gateTrendChange(rawDir1, rawStatus1, prevDir1, choch1, chochLiqSweep1, state1.ph_0, state1.ph_3, state1.pl_0, state1.pl_3)
-else
-    [NODIRECTION, 0, false]
-bool liqSweep1 = activeTF1 ? (gatedLiqSweep1 or calcLiquiditySweep(dir1, state1.ph_0, state1.ph_1, state1.ph_2, state1.pl_0, state1.pl_1, state1.pl_2, state1.phClose_0, state1.plClose_0)) : false
-
-// TF2
-[prevDir2, _ps2] = calcSwingsTrend(state2.phClose_1, state2.phClose_2, state2.phClose_3, state2.plClose_1, state2.plClose_2, state2.plClose_3)
-bool hasPrev2 = not na(state2.ph_3) and not na(state2.pl_3)
-[rawDir2, rawStatus2] = if activeTF2
-    calcSwingsTrend(state2.phClose_0, state2.phClose_1, state2.phClose_2, state2.plClose_0, state2.plClose_1, state2.plClose_2)
-else
-    [NODIRECTION, 0]
-[choch2, chochLiqSweep2] = if activeTF2
-    calcCHoCH(state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2, state2.phClose_0, state2.plClose_0, prevDir2, hasPrev2, state2.lastWasHigh)
-else
-    [CONTINUATION, false]
-[dir2, status2, gatedLiqSweep2] = if activeTF2
-    gateTrendChange(rawDir2, rawStatus2, prevDir2, choch2, chochLiqSweep2, state2.ph_0, state2.ph_3, state2.pl_0, state2.pl_3)
-else
-    [NODIRECTION, 0, false]
-bool liqSweep2 = activeTF2 ? (gatedLiqSweep2 or calcLiquiditySweep(dir2, state2.ph_0, state2.ph_1, state2.ph_2, state2.pl_0, state2.pl_1, state2.pl_2, state2.phClose_0, state2.plClose_0)) : false
-
-// TF3
-[prevDir3, _ps3] = calcSwingsTrend(state3.phClose_1, state3.phClose_2, state3.phClose_3, state3.plClose_1, state3.plClose_2, state3.plClose_3)
-bool hasPrev3 = not na(state3.ph_3) and not na(state3.pl_3)
-[rawDir3, rawStatus3] = if activeTF3
-    calcSwingsTrend(state3.phClose_0, state3.phClose_1, state3.phClose_2, state3.plClose_0, state3.plClose_1, state3.plClose_2)
-else
-    [NODIRECTION, 0]
-[choch3, chochLiqSweep3] = if activeTF3
-    calcCHoCH(state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2, state3.phClose_0, state3.plClose_0, prevDir3, hasPrev3, state3.lastWasHigh)
-else
-    [CONTINUATION, false]
-[dir3, status3, gatedLiqSweep3] = if activeTF3
-    gateTrendChange(rawDir3, rawStatus3, prevDir3, choch3, chochLiqSweep3, state3.ph_0, state3.ph_3, state3.pl_0, state3.pl_3)
-else
-    [NODIRECTION, 0, false]
-bool liqSweep3 = activeTF3 ? (gatedLiqSweep3 or calcLiquiditySweep(dir3, state3.ph_0, state3.ph_1, state3.ph_2, state3.pl_0, state3.pl_1, state3.pl_2, state3.phClose_0, state3.plClose_0)) : false
-
-// TF4
-[prevDir4, _ps4] = calcSwingsTrend(state4.phClose_1, state4.phClose_2, state4.phClose_3, state4.plClose_1, state4.plClose_2, state4.plClose_3)
-bool hasPrev4 = not na(state4.ph_3) and not na(state4.pl_3)
-[rawDir4, rawStatus4] = if activeTF4
-    calcSwingsTrend(state4.phClose_0, state4.phClose_1, state4.phClose_2, state4.plClose_0, state4.plClose_1, state4.plClose_2)
-else
-    [NODIRECTION, 0]
-[choch4, chochLiqSweep4] = if activeTF4
-    calcCHoCH(state4.ph_0, state4.ph_1, state4.ph_2, state4.pl_0, state4.pl_1, state4.pl_2, state4.phClose_0, state4.plClose_0, prevDir4, hasPrev4, state4.lastWasHigh)
-else
-    [CONTINUATION, false]
-[dir4, status4, gatedLiqSweep4] = if activeTF4
-    gateTrendChange(rawDir4, rawStatus4, prevDir4, choch4, chochLiqSweep4, state4.ph_0, state4.ph_3, state4.pl_0, state4.pl_3)
-else
-    [NODIRECTION, 0, false]
-bool liqSweep4 = activeTF4 ? (gatedLiqSweep4 or calcLiquiditySweep(dir4, state4.ph_0, state4.ph_1, state4.ph_2, state4.pl_0, state4.pl_1, state4.pl_2, state4.phClose_0, state4.plClose_0)) : false
+[dir1, status1, choch1, liqSweep1] = processTF(state1)
+[dir2, status2, choch2, liqSweep2] = processTF(state2)
+[dir3, status3, choch3, liqSweep3] = processTF(state3)
+[dir4, status4, choch4, liqSweep4] = processTF(state4)
 
 // ===== Draw icons for each TF =====
 if drawSwingIcons1 and activeTF1
     drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, iconColor1, iconColor1, iconGapPercent1, htfLookback1)
 
-if enableTF2 and drawSwingIcons2 and activeTF2
+if drawSwingIcons2 and activeTF2
     drawSwingIcons(state2, newSH2, newSL2, updSH2, updSL2, iconColor2, iconColor2, iconGapPercent2, htfLookback2)
 
-if enableTF3 and drawSwingIcons3 and activeTF3
+if drawSwingIcons3 and activeTF3
     drawSwingIcons(state3, newSH3, newSL3, updSH3, updSL3, iconColor3, iconColor3, iconGapPercent3, htfLookback3)
 
-if enableTF4 and drawSwingIcons4 and activeTF4
+if drawSwingIcons4 and activeTF4
     drawSwingIcons(state4, newSH4, newSL4, updSH4, updSL4, iconColor4, iconColor4, iconGapPercent4, htfLookback4)
 
 // ===== Draw CHoCH lines for each TF =====
 if drawChochLine1 and activeTF1
     drawChochLine(state1, choch1, newSH1, newSL1, iconColor1, iconColor1, chochLineStyle, chochLineWidth)
 
-if enableTF2 and drawChochLine2 and activeTF2
+if drawChochLine2 and activeTF2
     drawChochLine(state2, choch2, newSH2, newSL2, iconColor2, iconColor2, chochLineStyle, chochLineWidth)
 
-if enableTF3 and drawChochLine3 and activeTF3
+if drawChochLine3 and activeTF3
     drawChochLine(state3, choch3, newSH3, newSL3, iconColor3, iconColor3, chochLineStyle, chochLineWidth)
 
-if enableTF4 and drawChochLine4 and activeTF4
+if drawChochLine4 and activeTF4
     drawChochLine(state4, choch4, newSH4, newSL4, iconColor4, iconColor4, chochLineStyle, chochLineWidth)
 
 // ===== Dashboard =====

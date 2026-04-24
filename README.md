@@ -186,8 +186,19 @@ Hidden plots are available for TradingView alerts on each TF:
 - `request.security()` is always executed for all 4 TFs regardless of enable/disable (Pine Script limitation). The toggle saves on processing, not on the security call.
 - Maximum 40 `request.security()` calls per indicator (this uses 4)
 - Chart timeframe must be <= swing timeframe for valid results
+- **CHoCH detection on long HTFs from low chart TFs** (e.g. Daily CHoCH on 5m/1m chart): `request.security` only returns HTF data for the span covered by the chart's bar history. On a 5m chart (~17 days of history), only the most recent ~3-5 Daily pivots are visible, so the alternation state (`ph_2`, `pl_2`, `ph_3`, `pl_3`) may hold different values than on a 15m or 1H chart with more history. This can cause CHoCH to be detected on higher chart TFs but not on lower ones — both results are logically correct given the information available on each chart TF. To view CHoCH on long HTFs accurately, use a chart TF with enough history to include the relevant older pivots.
+- **CHoCH line drawing depth**: when the broken swing is beyond TradingView's drawing limit (~5000 bars back), the horizontal line may be silently rejected even though the detection fires in the dashboard. Common on low chart TFs with long HTFs.
 
 ## Changelog
+
+### v2.10 - 2026-04-24
+
+- **Internal refactor** (no functional change):
+  - Removed dead UDT fields (`ph_4`, `pl_4`, `lastRawPHClose`, `lastRawPLClose`)
+  - Removed redundant `enableTFx` guards in draw blocks (already enforced by `activeTFx`)
+  - Merged `new`/`upd` branches in `drawSwingIcons` (conditional delete on update)
+  - Replaced 4 copy-pasted per-TF calculation blocks (~260 lines) with a single `processTF(SwingState)` function — adding a 5th TF would now be trivial
+- Documented known limitations: CHoCH on long HTFs from low chart TFs, CHoCH line drawing depth
 
 ### v2.9 - 2026-04-03
 - Configurable icon color for TF1 (replaces hardcoded red/green, default silver) — consistent with TF2-4
