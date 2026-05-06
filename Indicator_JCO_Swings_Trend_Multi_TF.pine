@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.11
+// Version: 2.12
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -29,6 +29,10 @@
 //     may still fire in the dashboard, but the horizontal line may be silently rejected.
 //
 // Changelog:
+//   v2.12 - 2026-04-24
+//     - Dashboard display mode: bool input replaced with dropdown (Hidden / Full / Simplified)
+//     - New "Simplified" mode: compact 2-column dashboard showing only Trend per TF
+//       (1 row per active TF, sorted by duration, same colors as Full mode)
 //   v2.11 - 2026-04-24
 //     - Dashboard color tweaks for visual consistency with other indicators:
 //       * Bullish Trend / CHoCH: color.lime → #3fb950
@@ -119,7 +123,7 @@ max_bars_back(close, MAX_BARS_BACK)
 // ===== Inputs =====
 // General (common to all TFs)
 swingPeriod          = input.int(5, "Swing Period", minval=3, group="General")
-displayDashboard     = input.bool(true, "Display Dashboard", group="General")
+displayDashboard     = input.string("Full", "Display Dashboard", options=["Hidden", "Full", "Simplified"], group="General")
 displayExpansion     = input.bool(true, "Display Expansion", group="General")
 pipValue             = input.float(1.0, "Pip Value ($)", minval=0.0001, step=0.01, tooltip="Value of 1 pip in price units. Use 1 to display expansion in points. Gold: 0.1, Forex majors: 0.0001", group="General")
 dashboardBorderWidth = input.int(0, "Dashboard Border Width", minval=0, maxval=3, group="General")
@@ -744,26 +748,8 @@ if drawChochLine4 and activeTF4
     drawChochLine(state4, choch4, newSH4, newSL4, iconColor4, iconColor4, chochLineStyle, chochLineWidth)
 
 // ===== Dashboard =====
-if displayDashboard and barstate.islast
-    int numRows = displayExpansion ? 5 : 4
-    int numTFCols = 1 + (enableTF2 ? 1 : 0) + (enableTF3 ? 1 : 0) + (enableTF4 ? 1 : 0)
-    var table dashboard = table.new(position.top_right, numTFCols + 1, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
-
-    // Label column (col 0)
-    table.cell(dashboard, 0, 0, "", text_size=size.small)
-    table.cell(dashboard, 0, 1, "Trend", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
-    table.cell(dashboard, 0, 2, "CHoCH", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
-    table.cell(dashboard, 0, 3, "Liq Sweep", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
-    if displayExpansion
-        table.cell(dashboard, 0, 4, "Expansion", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
-
-    // Calculate expansions
-    float exp1 = na(state1.ph_0) or na(state1.pl_0) ? na : (state1.ph_0 - state1.pl_0) / pipValue
-    float exp2 = na(state2.ph_0) or na(state2.pl_0) ? na : (state2.ph_0 - state2.pl_0) / pipValue
-    float exp3 = na(state3.ph_0) or na(state3.pl_0) ? na : (state3.ph_0 - state3.pl_0) / pipValue
-    float exp4 = na(state4.ph_0) or na(state4.pl_0) ? na : (state4.ph_0 - state4.pl_0) / pipValue
-
-    // Sort TFs by duration (smallest to largest) for column ordering
+if displayDashboard != "Hidden" and barstate.islast
+    // Sort TFs by duration (smallest to largest) — common to Full and Simplified modes
     array<int> tfSecs = array.from(swingTF1Sec, swingTF2Sec, swingTF3Sec, swingTF4Sec)
     array<int> order = array.from(0, 1, 2, 3)
     for i = 0 to 2
@@ -779,24 +765,73 @@ if displayDashboard and barstate.islast
             array.set(order, i, array.get(order, minPos))
             array.set(order, minPos, tmpIdx)
 
-    // Package per-TF data into arrays for sorted access
+    // Package per-TF data into arrays for sorted access (used by both modes)
     array<string> tfNames    = array.from(formatTF(swingTimeFrame1), formatTF(swingTimeFrame2), formatTF(swingTimeFrame3), formatTF(swingTimeFrame4))
     array<bool>   tfValid    = array.from(validTF1, validTF2, validTF3, validTF4)
     array<bool>   tfEnabled  = array.from(true, enableTF2, enableTF3, enableTF4)
     array<int>    tfDir      = array.from(dir1, dir2, dir3, dir4)
     array<int>    tfStatus   = array.from(status1, status2, status3, status4)
-    array<int>    tfChoch    = array.from(choch1, choch2, choch3, choch4)
-    array<bool>   tfLiqSweep = array.from(liqSweep1, liqSweep2, liqSweep3, liqSweep4)
-    array<float>  tfExp      = array.from(exp1, exp2, exp3, exp4)
     array<color>  tfColor    = array.from(iconColor1, iconColor2, iconColor3, iconColor4)
 
-    // Fill enabled TF columns in sorted order (smallest TF left, largest right, disabled TFs hidden)
-    int col = 1
-    for i = 0 to 3
-        int idx = array.get(order, i)
-        if array.get(tfEnabled, idx)
-            fillDashboardColumn(dashboard, col, array.get(tfNames, idx), array.get(tfValid, idx), true, array.get(tfDir, idx), array.get(tfStatus, idx), array.get(tfChoch, idx), array.get(tfLiqSweep, idx), array.get(tfExp, idx), array.get(tfColor, idx))
-            col += 1
+    int numTFCols = 1 + (enableTF2 ? 1 : 0) + (enableTF3 ? 1 : 0) + (enableTF4 ? 1 : 0)
+
+    if displayDashboard == "Simplified"
+        // Simplified mode: 2 columns × (1 header + 1 row per active TF)
+        // Col 0: TF name, Col 1: trend value
+        int numRows = 1 + numTFCols
+        var table simpleDashboard = table.new(position.top_right, 2, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
+
+        // Header row
+        table.cell(simpleDashboard, 0, 0, "", text_size=size.small)
+        table.cell(simpleDashboard, 1, 0, "Trend", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+
+        // One row per enabled TF (sorted, disabled TFs hidden)
+        int row = 1
+        for i = 0 to 3
+            int idx = array.get(order, i)
+            if array.get(tfEnabled, idx)
+                table.cell(simpleDashboard, 0, row, array.get(tfNames, idx), text_color=array.get(tfColor, idx), text_halign=text.align_center, text_size=size.small)
+                if not array.get(tfValid, idx)
+                    table.cell(simpleDashboard, 1, row, "N/A", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+                else
+                    int direction = array.get(tfDir, idx)
+                    int trendSt = array.get(tfStatus, idx)
+                    string statusTxt = trendSt == MOMENTUM ? " (M)" : trendSt == COMPRESSION ? " (C)" : ""
+                    string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "?"
+                    color dirCol = direction == BULLISH ? #3fb950 : direction == BEARISH ? color.red : color.blue
+                    table.cell(simpleDashboard, 1, row, dirTxt, text_color=dirCol, text_halign=text.align_center, text_size=size.small)
+                row += 1
+    else
+        // Full mode
+        int numRows = displayExpansion ? 5 : 4
+        var table dashboard = table.new(position.top_right, numTFCols + 1, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
+
+        // Label column (col 0)
+        table.cell(dashboard, 0, 0, "", text_size=size.small)
+        table.cell(dashboard, 0, 1, "Trend", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 0, 2, "CHoCH", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        table.cell(dashboard, 0, 3, "Liq Sweep", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+        if displayExpansion
+            table.cell(dashboard, 0, 4, "Expansion", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+
+        // Calculate expansions
+        float exp1 = na(state1.ph_0) or na(state1.pl_0) ? na : (state1.ph_0 - state1.pl_0) / pipValue
+        float exp2 = na(state2.ph_0) or na(state2.pl_0) ? na : (state2.ph_0 - state2.pl_0) / pipValue
+        float exp3 = na(state3.ph_0) or na(state3.pl_0) ? na : (state3.ph_0 - state3.pl_0) / pipValue
+        float exp4 = na(state4.ph_0) or na(state4.pl_0) ? na : (state4.ph_0 - state4.pl_0) / pipValue
+
+        // Per-TF arrays specific to full mode
+        array<int>   tfChoch    = array.from(choch1, choch2, choch3, choch4)
+        array<bool>  tfLiqSweep = array.from(liqSweep1, liqSweep2, liqSweep3, liqSweep4)
+        array<float> tfExp      = array.from(exp1, exp2, exp3, exp4)
+
+        // Fill enabled TF columns in sorted order (smallest TF left, largest right, disabled TFs hidden)
+        int col = 1
+        for i = 0 to 3
+            int idx = array.get(order, i)
+            if array.get(tfEnabled, idx)
+                fillDashboardColumn(dashboard, col, array.get(tfNames, idx), array.get(tfValid, idx), true, array.get(tfDir, idx), array.get(tfStatus, idx), array.get(tfChoch, idx), array.get(tfLiqSweep, idx), array.get(tfExp, idx), array.get(tfColor, idx))
+                col += 1
 
 // ===== Plot hidden values for alerts =====
 plot(dir1, "Trend Direction TF1", display=display.none)

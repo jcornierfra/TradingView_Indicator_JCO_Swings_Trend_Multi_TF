@@ -28,7 +28,7 @@ A TradingView Pine Script v6 indicator that detects swing highs/lows on up to 4 
 |-----------|---------|-------------|
 | Swing Period | 5 | Number of bars for pivot detection (left/right = period/2) |
 | Icon Gap | 0.1% | Distance between swing icon and price level |
-| Display Dashboard | true | Show/hide the multi-column dashboard |
+| Display Dashboard | Full | Dashboard mode: Hidden, Full (Trend/CHoCH/Liq Sweep/Expansion), or Simplified (Trend only) |
 | Display Expansion | true | Show/hide the expansion row in dashboard |
 | Pip Value ($) | 0.1 | Value of 1 pip in price units (Gold: 0.1, Forex majors: 0.0001) |
 | Dashboard Border Width | 0 | Border width of the dashboard table |
@@ -190,6 +190,11 @@ Hidden plots are available for TradingView alerts on each TF:
 - **CHoCH line drawing depth**: when the broken swing is beyond TradingView's drawing limit (~5000 bars back), the horizontal line may be silently rejected even though the detection fires in the dashboard. Common on low chart TFs with long HTFs.
 
 ## Changelog
+
+### v2.12 - 2026-04-24
+
+- Dashboard display mode: `bool` input replaced with dropdown (**Hidden** / **Full** / **Simplified**)
+- New **Simplified** mode: compact 2-column dashboard showing only Trend per TF (1 row per active TF, sorted by duration, same colors as Full mode)
 
 ### v2.11 - 2026-04-24
 
