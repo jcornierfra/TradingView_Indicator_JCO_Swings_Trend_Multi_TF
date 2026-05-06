@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.10
+// Version: 2.11
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -29,6 +29,10 @@
 //     may still fire in the dashboard, but the horizontal line may be silently rejected.
 //
 // Changelog:
+//   v2.11 - 2026-04-24
+//     - Dashboard color tweaks for visual consistency with other indicators:
+//       * Bullish Trend / CHoCH: color.lime → #3fb950
+//       * Expansion: color.aqua → color.blue
 //   v2.10 - 2026-04-24
 //     - Internal refactor (no functional change):
 //       * Removed dead UDT fields (ph_4, pl_4, lastRawPHClose, lastRawPLClose)
@@ -651,12 +655,12 @@ fillDashboardColumn(table tbl, int col, string tfName, bool valid, bool enabled,
         // Trend
         string statusTxt = trendSt == MOMENTUM ? " (M)" : trendSt == COMPRESSION ? " (C)" : ""
         string dirTxt = direction == BULLISH ? "Bull" + statusTxt : direction == BEARISH ? "Bear" + statusTxt : "?"
-        color dirCol = direction == BULLISH ? color.lime : direction == BEARISH ? color.red : color.blue
+        color dirCol = direction == BULLISH ? #3fb950 : direction == BEARISH ? color.red : color.blue
         table.cell(tbl, col, 1, dirTxt, text_color=dirCol, text_halign=text.align_center, text_size=size.small)
 
         // CHoCH
         string chochTxt = choch == CHOCH_BULLISH ? "Bull" : choch == CHOCH_BEARISH ? "Bear" : "Cont"
-        color chochCol = choch == CHOCH_BULLISH ? color.lime : choch == CHOCH_BEARISH ? color.red : color.gray
+        color chochCol = choch == CHOCH_BULLISH ? #3fb950 : choch == CHOCH_BEARISH ? color.red : color.gray
         table.cell(tbl, col, 2, chochTxt, text_color=chochCol, text_halign=text.align_center, text_size=size.small)
 
         // Liquidity Sweep
@@ -664,7 +668,7 @@ fillDashboardColumn(table tbl, int col, string tfName, bool valid, bool enabled,
 
         // Expansion
         if displayExpansion
-            table.cell(tbl, col, 4, na(expansion) ? "N/A" : str.tostring(expansion, "#.#"), text_color=color.aqua, text_halign=text.align_center, text_size=size.small)
+            table.cell(tbl, col, 4, na(expansion) ? "N/A" : str.tostring(expansion, "#.#"), text_color=color.blue, text_halign=text.align_center, text_size=size.small)
     true
 
 // ===== State instances (persist across bars) =====

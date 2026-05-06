@@ -191,6 +191,12 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.11 - 2026-04-24
+
+- Dashboard color tweaks for visual consistency with other indicators:
+  - Bullish Trend / CHoCH: `color.lime` → `#3fb950`
+  - Expansion: `color.aqua` → `color.blue`
+
 ### v2.10 - 2026-04-24
 
 - **Internal refactor** (no functional change):
