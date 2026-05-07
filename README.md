@@ -13,6 +13,7 @@ A TradingView Pine Script v6 indicator that detects swing highs/lows on up to 4 
 - **Liquidity sweep detection** - With close price confirmation
 - **Swing alternation** - Automatic missing swing insertion when consecutive same-type pivots occur
 - **Multi-column dashboard** - Real-time overview of all active TF analyses
+- **VWAP overlay** - Daily and session-anchored VWAP with trend rows in dashboard
 
 ## Installation
 
@@ -190,6 +191,17 @@ Hidden plots are available for TradingView alerts on each TF:
 - **CHoCH line drawing depth**: when the broken swing is beyond TradingView's drawing limit (~5000 bars back), the horizontal line may be silently rejected even though the detection fires in the dashboard. Common on low chart TFs with long HTFs.
 
 ## Changelog
+
+### v2.13 - 2026-04-24
+
+- **VWAP overlay** (HLC3 source, no bands):
+  - **Daily VWAP** anchored at TV midnight, runs 24h
+  - **Session VWAP** anchored at configurable session start (default `1530` = NY AM open Paris time), only computes within the session window (`na` outside)
+- **Dashboard**: 2 trend rows (`VWAP D`, `VWAP S`) using a position + slope rule (`close vs vwap` and `vwap vs vwap[5]`)
+  - Compact single-row layout in Full mode when all 4 TFs enabled (S on left, D on right)
+  - 2-row fallback otherwise
+- **Chart line**: one plotted (default Daily, switchable to Session); yellow by default, configurable color/width
+- **Alerts**: 2 hidden plots (`VWAP Daily Trend`, `VWAP Session Trend`)
 
 ### v2.12 - 2026-04-24
 

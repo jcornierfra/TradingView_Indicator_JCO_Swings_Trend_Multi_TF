@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.12
+// Version: 2.13
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -14,6 +14,7 @@
 //              - Swing alternation with automatic missing swing insertion
 //              - Multi-column dashboard showing only active TF columns
 //              - CHoCH lines per TF showing the broken level from swing peak to breakout bar
+//              - VWAP overlay (Daily + Session) with trend rows in dashboard
 //
 // Known limitations:
 //   - CHoCH on long HTFs (e.g. Daily) from low chart TFs (e.g. 5m, 1m):
@@ -29,6 +30,16 @@
 //     may still fire in the dashboard, but the horizontal line may be silently rejected.
 //
 // Changelog:
+//   v2.13 - 2026-04-24
+//     - VWAP overlay (volume-weighted average price), HLC3 source, no bands:
+//       * Daily VWAP anchored at TV midnight, runs 24h
+//       * Session VWAP anchored at configurable session start (default 1530 = NY AM open
+//         Paris time), only computes within the session window (na outside)
+//     - 2 trend rows in dashboard ("VWAP D" and "VWAP S") using a position+slope rule
+//       (close vs vwap and vwap vs vwap[5]); compact single-row layout in Full mode when
+//       all 4 TFs are enabled (S on left cols, D on right cols), 2-row fallback otherwise
+//     - Single chart line plotted (default Daily, switchable to Session); yellow by default
+//     - 2 hidden plots for alerts: "VWAP Daily Trend", "VWAP Session Trend"
 //   v2.12 - 2026-04-24
 //     - Dashboard display mode: bool input replaced with dropdown (Hidden / Full / Simplified)
 //     - New "Simplified" mode: compact 2-column dashboard showing only Trend per TF
@@ -160,6 +171,13 @@ drawSwingIcons4  = input.bool(true, "Draw Icons", group="TF 4")
 drawChochLine4   = input.bool(true, "Draw CHoCH Line", group="TF 4")
 iconColor4       = input.color(color.aqua, "Icon Color", group="TF 4")
 iconGapPercent4  = input.float(0.2, "Icon Gap (% of price)", minval=0.01, maxval=2.0, step=0.01, group="TF 4")
+
+// VWAP
+enableVWAP       = input.bool(true, "Enable VWAP", group="VWAP")
+vwapSession      = input.session("1530-2200", "Session Anchor", group="VWAP", tooltip="Session start time used by VWAP Session calculation. Default 1530 = NY AM open (Paris time GMT+2). Only the start time is used as anchor.")
+vwapLineAnchor   = input.string("Daily", "Chart Line Anchor", options=["Daily", "Session"], group="VWAP", tooltip="Which VWAP to plot on the chart. Both are always shown in the dashboard.")
+vwapColor        = input.color(color.yellow, "Line Color", group="VWAP")
+vwapLineWidth    = input.int(1, "Line Width", minval=1, maxval=4, group="VWAP")
 
 // ===== Constants =====
 int NODIRECTION    = 0
@@ -721,6 +739,51 @@ processTF(SwingState s) =>
 [dir3, status3, choch3, liqSweep3] = processTF(state3)
 [dir4, status4, choch4, liqSweep4] = processTF(state4)
 
+// ===== VWAP Computation =====
+// Two anchored VWAPs: Daily (resets at TV midnight) and Session (resets at vwapSession start).
+// Each accumulates HLC3 × volume continuously between resets.
+
+// Trend rule: position + slope (5 bars back).
+calcVwapTrend(float vwap) =>
+    if na(vwap) or na(vwap[5])
+        NODIRECTION
+    else if close > vwap and vwap > vwap[5]
+        BULLISH
+    else if close < vwap and vwap < vwap[5]
+        BEARISH
+    else
+        NODIRECTION
+
+float vwapSrc = (high + low + close) / 3.0
+float vwapVol = na(volume) ? 0.0 : volume
+
+int  dayTime      = time("D")
+bool isNewDay     = not na(dayTime) and (na(dayTime[1]) or dayTime != dayTime[1])
+bool inSession    = not na(time(timeframe.period, vwapSession))
+bool isNewSession = inSession and not inSession[1]
+
+var float dCumPV = 0.0
+var float dCumV  = 0.0
+if isNewDay
+    dCumPV := 0.0
+    dCumV  := 0.0
+dCumPV += vwapSrc * vwapVol
+dCumV  += vwapVol
+float vwapDaily = dCumV > 0 ? dCumPV / dCumV : na
+
+var float sCumPV = 0.0
+var float sCumV  = 0.0
+if isNewSession
+    sCumPV := 0.0
+    sCumV  := 0.0
+if inSession
+    sCumPV += vwapSrc * vwapVol
+    sCumV  += vwapVol
+float vwapSess = inSession and sCumV > 0 ? sCumPV / sCumV : na
+
+int vwapDailyTrend = enableVWAP ? calcVwapTrend(vwapDaily) : NODIRECTION
+int vwapSessTrend  = enableVWAP ? calcVwapTrend(vwapSess) : NODIRECTION
+
 // ===== Draw icons for each TF =====
 if drawSwingIcons1 and activeTF1
     drawSwingIcons(state1, newSH1, newSL1, updSH1, updSL1, iconColor1, iconColor1, iconGapPercent1, htfLookback1)
@@ -776,9 +839,9 @@ if displayDashboard != "Hidden" and barstate.islast
     int numTFCols = 1 + (enableTF2 ? 1 : 0) + (enableTF3 ? 1 : 0) + (enableTF4 ? 1 : 0)
 
     if displayDashboard == "Simplified"
-        // Simplified mode: 2 columns × (1 header + 1 row per active TF)
+        // Simplified mode: 2 columns × (1 header + 1 row per active TF + optional 2 VWAP rows)
         // Col 0: TF name, Col 1: trend value
-        int numRows = 1 + numTFCols
+        int numRows = 1 + numTFCols + (enableVWAP ? 2 : 0)
         var table simpleDashboard = table.new(position.top_right, 2, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
 
         // Header row
@@ -801,9 +864,24 @@ if displayDashboard != "Hidden" and barstate.islast
                     color dirCol = direction == BULLISH ? #3fb950 : direction == BEARISH ? color.red : color.blue
                     table.cell(simpleDashboard, 1, row, dirTxt, text_color=dirCol, text_halign=text.align_center, text_size=size.small)
                 row += 1
+
+        // VWAP rows (Daily then Session) — chart-TF-based, no per-TF distinction
+        if enableVWAP
+            string vwapDTxt = vwapDailyTrend == BULLISH ? "Bull" : vwapDailyTrend == BEARISH ? "Bear" : "?"
+            color  vwapDCol = vwapDailyTrend == BULLISH ? #3fb950 : vwapDailyTrend == BEARISH ? color.red : color.blue
+            string vwapSTxt = vwapSessTrend == BULLISH ? "Bull" : vwapSessTrend == BEARISH ? "Bear" : "?"
+            color  vwapSCol = vwapSessTrend == BULLISH ? #3fb950 : vwapSessTrend == BEARISH ? color.red : color.blue
+            table.cell(simpleDashboard, 0, row,     "VWAP D", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+            table.cell(simpleDashboard, 1, row,     vwapDTxt, text_color=vwapDCol, text_halign=text.align_center, text_size=size.small)
+            table.cell(simpleDashboard, 0, row + 1, "VWAP S", text_color=color.gray, text_halign=text.align_center, text_size=size.small)
+            table.cell(simpleDashboard, 1, row + 1, vwapSTxt, text_color=vwapSCol, text_halign=text.align_center, text_size=size.small)
     else
         // Full mode
-        int numRows = displayExpansion ? 5 : 4
+        int baseRows = displayExpansion ? 5 : 4
+        // VWAP layout: 1 row when all 4 TFs enabled (S on left, D on right), 2 rows otherwise
+        bool vwapSingleRow = enableVWAP and numTFCols == 4
+        int vwapRows = enableVWAP ? (vwapSingleRow ? 1 : 2) : 0
+        int numRows = baseRows + vwapRows
         var table dashboard = table.new(position.top_right, numTFCols + 1, numRows, bgcolor=color.new(color.gray, 85), border_width=dashboardBorderWidth)
 
         // Label column (col 0)
@@ -833,6 +911,29 @@ if displayDashboard != "Hidden" and barstate.islast
                 fillDashboardColumn(dashboard, col, array.get(tfNames, idx), array.get(tfValid, idx), true, array.get(tfDir, idx), array.get(tfStatus, idx), array.get(tfChoch, idx), array.get(tfLiqSweep, idx), array.get(tfExp, idx), array.get(tfColor, idx))
                 col += 1
 
+        // VWAP rows
+        if enableVWAP
+            string vwapDTxt = vwapDailyTrend == BULLISH ? "Bull" : vwapDailyTrend == BEARISH ? "Bear" : "?"
+            color  vwapDCol = vwapDailyTrend == BULLISH ? #3fb950 : vwapDailyTrend == BEARISH ? color.red : color.blue
+            string vwapSTxt = vwapSessTrend == BULLISH ? "Bull" : vwapSessTrend == BEARISH ? "Bear" : "?"
+            color  vwapSCol = vwapSessTrend == BULLISH ? #3fb950 : vwapSessTrend == BEARISH ? color.red : color.blue
+            if vwapSingleRow
+                // Compact: VWAP S label+value in cols 0-1 (left), VWAP D label+value in cols 3-4 (right)
+                table.cell(dashboard, 0, baseRows, "VWAP S", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+                table.cell(dashboard, 1, baseRows, vwapSTxt, text_color=vwapSCol, text_halign=text.align_center, text_size=size.small)
+                table.cell(dashboard, 3, baseRows, "VWAP D", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+                table.cell(dashboard, 4, baseRows, vwapDTxt, text_color=vwapDCol, text_halign=text.align_center, text_size=size.small)
+            else
+                // 2-row fallback: label in col 0, value in col 1, other cols empty
+                table.cell(dashboard, 0, baseRows,     "VWAP D", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+                table.cell(dashboard, 1, baseRows,     vwapDTxt, text_color=vwapDCol, text_halign=text.align_center, text_size=size.small)
+                table.cell(dashboard, 0, baseRows + 1, "VWAP S", text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+                table.cell(dashboard, 1, baseRows + 1, vwapSTxt, text_color=vwapSCol, text_halign=text.align_center, text_size=size.small)
+
+// ===== Plot VWAP line =====
+float chartVwap = enableVWAP ? (vwapLineAnchor == "Daily" ? vwapDaily : vwapSess) : na
+plot(chartVwap, "VWAP", color=vwapColor, linewidth=vwapLineWidth)
+
 // ===== Plot hidden values for alerts =====
 plot(dir1, "Trend Direction TF1", display=display.none)
 plot(choch1, "CHoCH Status TF1", display=display.none)
@@ -846,3 +947,5 @@ plot(liqSweep3 ? 1 : 0, "Liquidity Sweep TF3", display=display.none)
 plot(dir4, "Trend Direction TF4", display=display.none)
 plot(choch4, "CHoCH Status TF4", display=display.none)
 plot(liqSweep4 ? 1 : 0, "Liquidity Sweep TF4", display=display.none)
+plot(vwapDailyTrend, "VWAP Daily Trend", display=display.none)
+plot(vwapSessTrend, "VWAP Session Trend", display=display.none)
