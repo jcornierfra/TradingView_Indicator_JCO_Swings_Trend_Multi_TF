@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 2.13
+// Version: 2.14
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_Swings_Trend_Multi_TF
 //
 // Description: Detects swing highs and lows on up to 4 configurable timeframes and determines
@@ -30,6 +30,15 @@
 //     may still fire in the dashboard, but the horizontal line may be silently rejected.
 //
 // Changelog:
+//   v2.14 - 2026-05-08
+//     - Fix runtime error "historical offset beyond buffer's limit" in drawChochLine
+//       when a previous CHoCH swing is far back (e.g. Daily TF on a chart with deep history):
+//       * Replaced inline max_bars_back(high/low/close) pragmas with a single
+//         indicator(max_bars_back=1000) parameter — extends the buffer for ALL series,
+//         including time/bar_index used internally by line.new(xloc=xloc.bar_index)
+//       * Added guard in drawChochLine: skips line tracing when (bar_index - fromBar)
+//         exceeds MAX_BARS_BACK. CHoCH detection still fires in the dashboard, only
+//         the horizontal line is suppressed (matches the existing documented limitation)
 //   v2.13 - 2026-04-24
 //     - VWAP overlay (volume-weighted average price), HLC3 source, no bands:
 //       * Daily VWAP anchored at TV midnight, runs 24h
@@ -121,15 +130,13 @@
 //     - Dashboard with trend, CHoCH, liquidity sweep, expansion
 
 //@version=6
-indicator("JCO Swings Trend Multi TF", overlay=true, max_labels_count=500)
+indicator("JCO Swings Trend Multi TF", overlay=true, max_labels_count=500, max_bars_back=1000)
 
-// Guarantee a historical buffer deep enough for HTF pivot searches on lower chart TFs
-// (e.g. Daily swings on a 1H chart). Dynamic accesses in findHighestHighBetween /
-// findLowestLowBetween are clamped to MAX_BARS_BACK - 1 to avoid runtime errors.
+// MAX_BARS_BACK matches the indicator()'s max_bars_back setting above (which extends
+// the historical buffer for ALL series, including time/bar_index used internally by
+// line.new with xloc.bar_index). Used to clamp dynamic lookbacks in helpers and to
+// gate drawChochLine when the previous swing bar is beyond the buffer.
 int MAX_BARS_BACK = 1000
-max_bars_back(high,  MAX_BARS_BACK)
-max_bars_back(low,   MAX_BARS_BACK)
-max_bars_back(close, MAX_BARS_BACK)
 
 // ===== Inputs =====
 // General (common to all TFs)
@@ -635,7 +642,11 @@ drawChochLine(SwingState st, int choch, bool newHigh, bool newLow, color bullCol
                 fromBar := st.prevAcceptedLowBar
                 level    := st.pl_1
                 toBar    := st.lastAcceptedLowBar
-            if not na(fromBar) and not na(level) and not na(toBar)
+            // Skip drawing when the previous swing bar is beyond MAX_BARS_BACK
+            // (line.new with xloc.bar_index needs to access the historical buffer
+            // for that bar; an offset beyond the buffer triggers a runtime error).
+            // Detection still fires in the dashboard — only the line is suppressed.
+            if not na(fromBar) and not na(level) and not na(toBar) and (bar_index - fromBar) < MAX_BARS_BACK
                 string ls = styleStr == "dashed" ? line.style_dashed : styleStr == "dotted" ? line.style_dotted : line.style_solid
                 st.lastChochLine := line.new(fromBar, level, toBar, level, xloc=xloc.bar_index, color=lineCol, style=ls, width=lineWidth)
         else

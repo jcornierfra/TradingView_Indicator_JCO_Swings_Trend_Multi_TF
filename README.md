@@ -192,6 +192,12 @@ Hidden plots are available for TradingView alerts on each TF:
 
 ## Changelog
 
+### v2.14 - 2026-05-08
+
+- **Fix runtime error** `"historical offset beyond buffer's limit"` in `drawChochLine` when a previous CHoCH swing is far back (e.g. Daily TF on a chart with deep history):
+  - Replaced inline `max_bars_back(high/low/close)` pragmas with a single `indicator(max_bars_back=1000)` parameter — extends the buffer for **all** series, including `time`/`bar_index` used internally by `line.new(xloc=xloc.bar_index)`
+  - Added guard in `drawChochLine`: skips line tracing when `(bar_index - fromBar)` exceeds `MAX_BARS_BACK`. CHoCH detection still fires in the dashboard, only the horizontal line is suppressed (matches the existing documented limitation)
+
 ### v2.13 - 2026-04-24
 
 - **VWAP overlay** (HLC3 source, no bands):
